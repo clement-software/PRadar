@@ -1,17 +1,7 @@
-AGENTS.md
-CLAUDE.md
-README.md
-Makefile
-/docs/*
-!/docs/product/
-/docs/product/*
-!/docs/product/PRD.md
-!/docs/architecture/
-/docs/architecture/*
-!/docs/architecture/*.md
-!/docs/adr/
-/docs/adr/*
-!/docs/adr/*.md
+# Local tooling and macOS artefacts
 ui-model
 .idea
 .DS_Store
+
+# Local verification artefacts
+coverage.out
