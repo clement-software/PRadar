@@ -6,6 +6,12 @@ Makefile
 !/docs/product/
 /docs/product/*
 !/docs/product/PRD.md
+!/docs/architecture/
+/docs/architecture/*
+!/docs/architecture/*.md
+!/docs/adr/
+/docs/adr/*
+!/docs/adr/*.md
 ui-model
 .idea
 .DS_Store
