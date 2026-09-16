@@ -1,0 +1,57 @@
+{{template "head" .}}
+{{with .Detail}}
+<article class="detail" aria-labelledby="detail-title">
+  <header class="forgejo-header">
+    <p class="meta"><span class="repo">{{.Card.Ref.Repository}}</span> #{{.Card.Ref.Number}} · {{.Card.Author}} · mis à jour {{when .Card.UpdatedAt}} · <span class="state state-{{.Card.State}}">{{.Card.State}}</span>{{if .Archived}} · archivée{{else if .Card.Unread}} · <strong>non lue</strong>{{end}}</p>
+    <h1 id="detail-title">{{.Card.Title}}</h1>
+    <p class="actions">
+      <a href="{{.Card.HTMLURL}}" rel="noopener noreferrer">Ouvrir dans Forgejo</a>
+      {{if and .HasCard (not .Archived)}}
+      <form method="post" action="{{prPath $.Ref}}"><input type="hidden" name="action" value="read"><button type="submit" {{if not .Card.Unread}}disabled{{end}}>Marquer comme lue</button></form>
+      <form method="post" action="{{prPath $.Ref}}"><input type="hidden" name="action" value="archive"><button type="submit">Archiver</button></form>
+      {{end}}
+      <form method="post" action="{{prPath $.Ref}}"><input type="hidden" name="action" value="replay"><button type="submit">Rejouer l'analyse</button></form>
+    </p>
+  </header>
+
+  {{if .HasCard}}
+  <section aria-labelledby="analysis-title" class="analysis">
+    <h2 id="analysis-title">Analyse</h2>
+    {{if eq .Card.Analysis.Status "unavailable"}}
+      <p class="unavailable">Analyse indisponible après trois tentatives. La pull request reste accessible dans Forgejo ; un rejeu avec un prompt, un skill, un moteur ou un modèle différent crée une nouvelle analyse.</p>
+      {{if .Provenance.Failure}}<p class="failure">Dernière erreur technique : {{.Provenance.Failure}}</p>{{end}}
+    {{else}}
+      <p class="intent">{{.Card.Analysis.Intent}}</p>
+      <p class="badges"><span class="badge importance">Importance : {{.Card.Analysis.Importance}}</span>{{range .Card.Analysis.Risks}} <span class="badge risk">{{.}}</span>{{end}}</p>
+      <div class="body">{{markdown .Card.Analysis.Body}}</div>
+      <h3>Changements depuis la version précédente{{if .Card.Analysis.PreviousHeadSHA}} ({{.Card.Analysis.PreviousHeadSHA}}){{end}}</h3>
+      <div class="body">{{if .Card.Analysis.ChangeSincePrevious}}{{markdown .Card.Analysis.ChangeSincePrevious}}{{else}}<p>Première version analysée.</p>{{end}}</div>
+    {{end}}
+    <details class="provenance">
+      <summary>Provenance</summary>
+      <dl>
+        <dt>Moteur</dt><dd>{{.Provenance.Profile.Engine}}</dd>
+        <dt>Modèle</dt><dd>{{.Provenance.Profile.Model}}</dd>
+        <dt>Prompt</dt><dd>{{.Provenance.Profile.PromptVersion}}</dd>
+        <dt>Skill</dt><dd>{{.Provenance.Profile.SkillVersion}}</dd>
+        <dt>Révision d'entrée</dt><dd><code>{{.Provenance.InputRevision}}</code></dd>
+        <dt>Tentative</dt><dd>{{.Provenance.Attempt}}</dd>
+        <dt>Durée</dt><dd>{{duration .Provenance.Duration}}</dd>
+        <dt>Usage</dt><dd>{{range $k, $v := .Provenance.Usage}}{{$k}}={{$v}} {{else}}indisponible{{end}}</dd>
+      </dl>
+    </details>
+  </section>
+  {{else}}
+  <p class="empty">Aucune analyse publiée pour la dernière version. {{if .Archived}}La carte réapparaîtra une fois la nouvelle version analysée.{{end}}</p>
+  {{end}}
+
+  <section aria-labelledby="history-title" class="history">
+    <h2 id="history-title">Historique de pull request</h2>
+    <ol>
+      {{range .History}}<li><time>{{when .CreatedAt}}</time> analyse {{.Analysis.Status}} de <code>{{.Analysis.HeadSHA}}</code> ({{.Provenance.Profile.Engine}}/{{.Provenance.Profile.Model}}, prompt {{.Provenance.Profile.PromptVersion}}, skill {{.Provenance.Profile.SkillVersion}}){{if .Published}} — publiée{{else}} — conservée, obsolète{{end}}</li>{{end}}
+      {{range .Events}}<li><time>{{when .At}}</time> {{.Kind}}{{if .Detail}} : {{.Detail}}{{end}}</li>{{end}}
+    </ol>
+  </section>
+</article>
+{{end}}
+{{template "foot" .}}

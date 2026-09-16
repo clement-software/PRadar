@@ -26,6 +26,8 @@ linters:
   settings:
     misspell:
       locale: UK
+      ignore-rules:
+        - prioritized # goldmark API
     gosec:
       excludes:
         - G304 # file paths are always confined to an application-owned root and covered by tests

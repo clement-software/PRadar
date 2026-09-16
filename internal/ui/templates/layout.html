@@ -1,0 +1,33 @@
+{{define "head"}}<!doctype html>
+<html lang="fr">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="color-scheme" content="light dark">
+<title>{{.Title}} · PRadar</title>
+<link rel="stylesheet" href="/assets/style.css">
+</head>
+<body>
+<a class="skip" href="#main">Aller au contenu</a>
+<header class="top">
+  <a class="brand" href="/" aria-label="PRadar, timeline">PRadar</a>
+  <nav aria-label="Vue">{{template "status" .Status}}</nav>
+</header>
+{{if .Notice}}<p class="notice" role="status">{{.Notice}}</p>{{end}}
+{{if .Problem}}<p class="problem" role="alert">{{.Problem}}</p>{{end}}
+<main id="main" tabindex="-1">{{end}}
+
+{{define "foot"}}</main>
+<script src="/assets/mermaid.min.js"></script>
+<script src="/assets/app.js"></script>
+</body>
+</html>{{end}}
+
+{{define "status"}}<ul class="status" aria-label="État de la collecte">
+  <li>Synchronisation : {{if .LastSyncAt.IsZero}}jamais{{else}}{{when .LastSyncAt}}{{end}}</li>
+  <li>En attente : {{.Pending}}</li>
+  <li>En cours : {{.Running}}</li>
+  <li>Nouvelles tentatives : {{.Retrying}}</li>
+  <li>Indisponibles : {{.Unavailable}}</li>
+  {{range .Blocked}}<li class="blocked">Bloqué : {{.Repository}} — {{.BlockedReason}}</li>{{end}}
+</ul>{{end}}

@@ -1,0 +1,59 @@
+{{template "head" .}}
+<section aria-labelledby="filters-title" class="filters">
+  <h2 id="filters-title">Filtres</h2>
+  <form method="get" action="/">
+    <label><input type="checkbox" name="unread" value="1" {{if .Filter.UnreadOnly}}checked{{end}}> Non lues</label>
+    <label>Dépôt <select name="repository"><option value="">Tous</option>{{range .Repos}}<option {{if eq . $.Filter.Repository}}selected{{end}}>{{.}}</option>{{end}}</select></label>
+    <label>État <select name="state"><option value="">Tous</option>{{range .States}}<option value="{{.}}" {{if eq . (print $.Filter.State)}}selected{{end}}>{{.}}</option>{{end}}</select></label>
+    <label>Importance <select name="importance"><option value="">Toutes</option>{{range .Importances}}<option value="{{.}}" {{if eq . (print $.Filter.Importance)}}selected{{end}}>{{.}}</option>{{end}}</select></label>
+    <label>Risque <select name="risk"><option value="">Tous</option>{{range .Risks}}<option {{if eq . $.Filter.Risk}}selected{{end}}>{{.}}</option>{{end}}</select></label>
+    <button type="submit">Filtrer</button>
+  </form>
+</section>
+
+<section aria-labelledby="timeline-title">
+  <h1 id="timeline-title">Timeline</h1>
+  {{if not .Cards}}<p class="empty">Aucune carte. Les analyses en attente apparaissent une fois publiées.</p>{{end}}
+  <ol class="cards">
+  {{range .Cards}}
+    <li class="card importance-{{.Analysis.Importance}} {{if .Unread}}unread{{end}}">
+      <article aria-labelledby="card-{{.Ref.Number}}">
+        <p class="meta"><span class="repo">{{.Ref.Repository}}</span> #{{.Ref.Number}} · {{.Author}} · {{when .UpdatedAt}} · <span class="state state-{{.State}}">{{.State}}</span>{{if .Unread}} · <strong>non lue</strong>{{end}}</p>
+        <h2 id="card-{{.Ref.Number}}"><a href="{{prPath .Ref}}">{{.Title}}</a></h2>
+        {{if eq .Analysis.Status "unavailable"}}<p class="unavailable">Analyse indisponible</p>{{else}}<p class="intent">{{.Analysis.Intent}}</p>{{end}}
+        <p class="badges"><span class="badge importance">Importance : {{.Analysis.Importance}}</span>{{range .Analysis.Risks}} <span class="badge risk">{{.}}</span>{{end}}</p>
+        <p class="actions"><a href="{{.HTMLURL}}" rel="noopener noreferrer">Ouvrir dans Forgejo</a></p>
+      </article>
+    </li>
+  {{end}}
+  </ol>
+</section>
+
+<section aria-labelledby="subscriptions-title" class="subscriptions">
+  <h2 id="subscriptions-title">Abonnements</h2>
+  <ul>
+  {{range .Status.Subscriptions}}
+    <li>
+      <span>{{.Repository}}{{if not .Active}} (arrêté){{end}}{{if .BlockedReason}} — bloqué : {{.BlockedReason}}{{end}}</span>
+      {{if .Active}}<form method="post" action="/subscriptions/{{.Repository}}"><input type="hidden" name="action" value="unsubscribe"><button type="submit">Se désabonner</button></form>{{end}}
+      <form method="post" action="/subscriptions/{{.Repository}}" class="danger">
+        <input type="hidden" name="action" value="delete">
+        <label>Confirmer la suppression en saisissant <code>{{.Repository}}</code> <input name="confirm" autocomplete="off"></label>
+        <button type="submit">Supprimer les données</button>
+      </form>
+    </li>
+  {{end}}
+  </ul>
+  <form method="post" action="/subscriptions" class="subscribe">
+    <h3>Ajouter un dépôt</h3>
+    <label>URL Forgejo du dépôt <input name="url" type="url" required placeholder="https://forge.example/owner/repo"></label>
+    <fieldset><legend>Import initial</legend>
+      <label><input type="radio" name="import" value="none"> Aucune</label>
+      <label><input type="radio" name="import" value="ten" checked> Dix plus récentes</label>
+      <label><input type="radio" name="import" value="all"> Toutes</label>
+    </fieldset>
+    <label>Auteurs exclus (séparés par des virgules) <input name="excluded_authors"></label>
+    <button type="submit">S'abonner</button>
+  </form>
+</section>
+{{template "foot" .}}
