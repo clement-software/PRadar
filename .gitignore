@@ -2,7 +2,10 @@ AGENTS.md
 CLAUDE.md
 README.md
 Makefile
-/docs
+/docs/*
+!/docs/product/
+/docs/product/*
+!/docs/product/PRD.md
 ui-model
 .idea
 .DS_Store
