@@ -12,6 +12,9 @@ PRD gate, not the production design (see `target-state.md`).
 WAL mode, scavenges the owned workspace root, starts one polling collector and
 one analysis worker under a root context, and serves a loopback visualizer.
 `--controlled` substitutes a fixture Forgejo and a deterministic analyzer.
+`--instance <https url>` uses the real instance with the token read from the
+Keychain (`pradar token set`); until ticket 06 lands, live mode collects but
+its analyzer reports "no analysis engine", so analyses end `unavailable`.
 
 ## Modules and seams
 
@@ -21,7 +24,8 @@ one analysis worker under a root context, and serves a loopback visualizer.
 | `internal/app` | Abonnements and reconciliation (`Collector`), the single leased worker (`Worker`), reading use cases (`Timeline`); declares the `Forge`, `CollectionStore`, `WorkStore`, `Workspace`, `Analyzer` and `ReadModel` interfaces it consumes | `internal/pullrequest` |
 | `internal/adapter/sqlite` | Schema, observation+scheduling transaction, atomic leased claim, completion with latest-only publication, read model, user state | `database/sql`, `modernc.org/sqlite`, `internal/app` |
 | `internal/adapter/workspace` | Owned temporary root, safe materialisation, cleanup and startup scavenging | `os` |
-| `internal/adapter/forgejo` | Instance and repository URL validation (HTTP client follows in ticket 03) | `net/url` |
+| `internal/adapter/forgejo` | Instance and repository URL validation, read-only bounded HTTP client (auth header, same-origin redirects only, transient retries, pagination, payload mapping, diff bound), self-redacting `Token` | `net/http`, `internal/pullrequest` |
+| `internal/adapter/keychain` | Token lookup and storage through `/usr/bin/security`; the token never enters SQLite, logs or exports | `os/exec`, `internal/adapter/forgejo` |
 | `internal/controlled` | Deterministic Forgejo and analyzer substitutes for `--controlled` | `internal/app` |
 | `internal/ui` | Loopback HTTP visualizer, safe Markdown rendering, embedded assets | `net/http`, `html/template`, `goldmark`, `internal/app` |
 

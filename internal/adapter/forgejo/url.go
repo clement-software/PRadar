@@ -53,6 +53,9 @@ func isLoopback(host string) bool {
 // String is the canonical origin plus optional base path.
 func (i Instance) String() string { return i.base.String() }
 
+// Host is the instance host, used as the Keychain account name.
+func (i Instance) Host() string { return i.base.Host }
+
 // Origin is scheme://host used for redirect checks.
 func (i Instance) Origin() string { return i.base.Scheme + "://" + i.base.Host }
 

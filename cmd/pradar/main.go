@@ -8,15 +8,18 @@ import (
 	"errors"
 	"flag"
 	"fmt"
+	"io"
 	"log/slog"
 	"os"
 	"os/signal"
 	"path/filepath"
+	"strings"
 	"sync"
 	"syscall"
 	"time"
 
 	"github.com/clement-software/PRadar/internal/adapter/forgejo"
+	"github.com/clement-software/PRadar/internal/adapter/keychain"
 	"github.com/clement-software/PRadar/internal/adapter/sqlite"
 	"github.com/clement-software/PRadar/internal/adapter/workspace"
 	"github.com/clement-software/PRadar/internal/app"
@@ -34,14 +37,44 @@ func main() {
 
 func run(args []string) error {
 	if len(args) == 0 {
-		return errors.New("usage: pradar run [flags]")
+		return errors.New("usage: pradar run [flags] | pradar token set --instance <url>")
 	}
 	switch args[0] {
 	case "run":
 		return runDemonstrator(args[1:])
+	case "token":
+		return runToken(args[1:])
 	default:
 		return fmt.Errorf("unknown command %q", args[0])
 	}
+}
+
+// runToken reads a read-only Forgejo token from standard input and stores it
+// in the macOS Keychain under the instance host.
+func runToken(args []string) error {
+	if len(args) == 0 || args[0] != "set" {
+		return errors.New("usage: pradar token set --instance <url> < token")
+	}
+	fs := flag.NewFlagSet("token set", flag.ContinueOnError)
+	raw := fs.String("instance", os.Getenv("PRADAR_FORGEJO_INSTANCE"), "Forgejo instance URL (https)")
+	if err := fs.Parse(args[1:]); err != nil {
+		return err
+	}
+	instance, err := forgejo.ParseInstance(*raw, false)
+	if err != nil {
+		return err
+	}
+	token, err := io.ReadAll(io.LimitReader(os.Stdin, 4<<10))
+	if err != nil {
+		return fmt.Errorf("read token: %w", err)
+	}
+	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt)
+	defer stop()
+	if err := (keychain.Store{}).Save(ctx, instance.Host(), forgejo.Token(strings.TrimSpace(string(token)))); err != nil {
+		return err
+	}
+	fmt.Fprintln(os.Stderr, "token stored in the Keychain for", instance.Host())
+	return nil
 }
 
 type config struct {
@@ -68,14 +101,38 @@ func runDemonstrator(args []string) error {
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
-	if !cfg.controlled {
-		return errors.New("live mode is not available yet; use --controlled")
-	}
 
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 	log := slog.New(slog.NewJSONHandler(os.Stderr, nil))
 	now := time.Now
+
+	// External boundaries: the controlled substitutes, or the real instance with its Keychain token.
+	var (
+		forge    app.Forge
+		analyzer app.Analyzer
+		profile  pullrequest.Profile
+		instance forgejo.Instance
+	)
+	if cfg.controlled {
+		cfg.debounce = 0 // ponytail: the controlled demo should show a carte within seconds, not ten minutes
+		instance, _ = forgejo.ParseInstance("https://forge.example", false)
+		forge, analyzer = controlled.Forge{Now: now}, controlled.Analyzer{}
+		profile = pullrequest.Profile{PromptVersion: "controlled-1", SkillVersion: "controlled-1", Engine: "controlled", Model: "deterministic"}
+	} else {
+		var err error
+		if instance, err = forgejo.ParseInstance(cfg.instance, false); err != nil {
+			return fmt.Errorf("--instance: %w", err)
+		}
+		token, err := (keychain.Store{}).Lookup(ctx, instance.Host())
+		if err != nil {
+			return err
+		}
+		forge = forgejo.NewClient(instance, token)
+		// ponytail: the restricted Claude analyzer lands with ticket 06; until then live abonnements collect but cannot analyse.
+		analyzer = unavailableAnalyzer{}
+		profile = pullrequest.Profile{PromptVersion: "none", SkillVersion: "none", Engine: "none", Model: "none"}
+	}
 
 	if err := os.MkdirAll(cfg.dataDir, 0o700); err != nil {
 		return fmt.Errorf("create data directory: %w", err)
@@ -93,24 +150,15 @@ func runDemonstrator(args []string) error {
 		return fmt.Errorf("scavenge workspaces: %w", err)
 	}
 
-	profile := pullrequest.Profile{PromptVersion: "controlled-1", SkillVersion: "controlled-1", Engine: "controlled", Model: "deterministic"}
-	forge := controlled.Forge{Now: now}
-	var analyzer app.Analyzer = controlled.Analyzer{}
-	instance, err := forgejo.ParseInstance("https://forge.example", false)
-	if err != nil {
-		return err
-	}
-
-	if cfg.controlled {
-		cfg.debounce = 0 // ponytail: the controlled demo should show a carte within seconds, not ten minutes
-	}
 	collector := &app.Collector{Forge: forge, Store: store, Profile: profile, Debounce: cfg.debounce, Now: now, Log: log}
 	worker := &app.Worker{Store: store, Analyzer: analyzer, Workspace: root, Diffs: forge, Now: now, Lease: cfg.lease,
 		Backoff: app.ExponentialBackoff(time.Minute), Log: log}
 	collector.Interrupt = worker.Interrupt
 	timeline := &app.Timeline{Store: store, Profile: profile, Now: now}
-	if _, err := collector.Subscribe(ctx, app.SubscribeRequest{Repository: controlled.Repository, HTMLURL: "https://forge.example/" + controlled.Repository, Import: app.ImportTen}); err != nil {
-		return err
+	if cfg.controlled {
+		if _, err := collector.Subscribe(ctx, app.SubscribeRequest{Repository: controlled.Repository, HTMLURL: "https://forge.example/" + controlled.Repository, Import: app.ImportTen}); err != nil {
+			return err
+		}
 	}
 
 	server := &ui.Server{Timeline: timeline, Collector: collector, Log: log, ParseRepositoryURL: instance.ParseRepositoryURL}
@@ -124,4 +172,11 @@ func runDemonstrator(args []string) error {
 	stop()
 	wg.Wait()
 	return err
+}
+
+// unavailableAnalyzer is the placeholder engine of live mode before ticket 06.
+type unavailableAnalyzer struct{}
+
+func (unavailableAnalyzer) Analyse(context.Context, app.AnalysisRequest) (app.AnalysisResult, error) {
+	return app.AnalysisResult{}, errors.New("no analysis engine is configured in this build")
 }

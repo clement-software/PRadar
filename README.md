@@ -40,6 +40,20 @@ est le point d'entrée du démonstrateur et `internal/` héberge ses paquets.
 portes (`gofmt`, `go mod tidy -diff`, `go vet`, tests avec `-race`,
 `golangci-lint v2.13.2` avec `modernize`).
 
+## Démonstrateur
+
+```sh
+# analyse contrôlée de bout en bout, sans instance ni jeton
+go run ./cmd/pradar run --controlled
+
+# instance réelle : jeton lecture seule dans le trousseau macOS, puis lancement
+printf '%s' "$TOKEN" | go run ./cmd/pradar token set --instance https://forge.example
+go run ./cmd/pradar run --instance https://forge.example
+```
+
+Le visualiseur n'écoute que sur 127.0.0.1 ; son URL est imprimée au démarrage.
+Les abonnements s'ajoutent depuis la timeline en collant l'URL Forgejo du dépôt.
+
 ## Workflow de référence
 
 ```text
