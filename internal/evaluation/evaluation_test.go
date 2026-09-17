@@ -147,3 +147,22 @@ func TestBuildReport_ThresholdEdgesAndInvalidation(t *testing.T) {
 		t.Fatal("score for another head accepted")
 	}
 }
+
+func TestDraftItem_GuessesSizeAndAuthorship(t *testing.T) {
+	t.Parallel()
+	ref := pullrequest.Ref{Repository: "acme/widgets", Number: 7}
+	small := evaluation.DraftItem(ref, "abc1234", "alice", 42)
+	if small.Size != evaluation.SizeSmall || small.Authorship != evaluation.AuthorHuman || small.Category != "" || small.Reason != "" {
+		t.Fatalf("small human draft = %+v", small)
+	}
+	large := evaluation.DraftItem(ref, "abc1234", "renovate[bot]", 900)
+	if large.Size != evaluation.SizeLarge || large.Authorship != evaluation.AuthorAgent {
+		t.Fatalf("large agent draft = %+v", large)
+	}
+	if agent := evaluation.DraftItem(ref, "abc1234", "Claude-Agent", 1); agent.Authorship != evaluation.AuthorAgent {
+		t.Fatalf("agent-like login = %+v", agent)
+	}
+	if err := (evaluation.Manifest{Items: []evaluation.Item{large}}).Validate(); err == nil {
+		t.Fatal("a draft without category and reason must not validate")
+	}
+}

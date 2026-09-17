@@ -251,6 +251,58 @@ type wirePullRequest struct {
 	Head struct {
 		SHA string `json:"sha"`
 	} `json:"head"`
+	Additions    int `json:"additions"`
+	Deletions    int `json:"deletions"`
+	ChangedFiles int `json:"changed_files"`
+}
+
+// Candidate is a recent pull request considered for the evaluation corpus.
+type Candidate struct {
+	Ref          pullrequest.Ref
+	Title        string
+	Author       string
+	State        pullrequest.State
+	Draft        bool
+	HeadSHA      string
+	HTMLURL      string
+	UpdatedAt    time.Time
+	ChangedLines int
+	ChangedFiles int
+}
+
+// ListRecentPullRequests returns up to limit pull requests in any state, most
+// recently updated first, with their change size for corpus selection.
+func (c *Client) ListRecentPullRequests(ctx context.Context, repository string, limit int) ([]Candidate, error) {
+	owner, name, err := splitRepository(repository)
+	if err != nil {
+		return nil, err
+	}
+	var candidates []Candidate
+	for page := 1; len(candidates) < limit; page++ {
+		query := url.Values{"state": {"all"}, "sort": {"recentupdate"}, "limit": {strconv.Itoa(c.PageSize)}, "page": {strconv.Itoa(page)}}
+		var items []wirePullRequest
+		if err := c.getJSON(ctx, c.endpoint("repos/"+owner+"/"+name+"/pulls", query), &items); err != nil {
+			return nil, err
+		}
+		if len(items) == 0 {
+			break
+		}
+		for _, item := range items {
+			observation, err := item.observation(repository)
+			if err != nil {
+				return nil, err
+			}
+			candidates = append(candidates, Candidate{
+				Ref: observation.Ref, Title: observation.Title, Author: observation.Author, State: observation.State, Draft: observation.Draft,
+				HeadSHA: observation.HeadSHA, HTMLURL: observation.HTMLURL, UpdatedAt: observation.UpdatedAt,
+				ChangedLines: item.Additions + item.Deletions, ChangedFiles: item.ChangedFiles,
+			})
+			if len(candidates) == limit {
+				break
+			}
+		}
+	}
+	return candidates, nil
 }
 
 func (w wirePullRequest) observation(repository string) (pullrequest.Observation, error) {

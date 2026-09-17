@@ -33,3 +33,23 @@ next production phase.
 - [ ] The accepted verdict and any resulting product decision are promoted to
   the durable product documentation rather than remaining only in this ticket.
 
+
+## Comments
+
+2026-09-17 — Procedure prepared by the agent; every value below is the user's.
+
+1. `printf '%s' "$TOKEN" | pradar token set --instance https://<forge>` (read-only token, Keychain only).
+2. `pradar corpus candidates --instance https://<forge> owner/a owner/b [owner/c] > manifest.json`
+   lists the fifteen most recently updated pull requests per repository with a
+   guessed `size` (large from 200 changed lines) and `authorship` (bot-like
+   logins); `category` is empty and `reason` starts with `TODO` plus the title,
+   author, state, size and URL to help the choice.
+3. Trim to exactly twenty items over two or three repositories, keep the mix
+   (small/large, human/agent, code/ci/infra), fill `category` and `reason`,
+   and remove drafts. Head SHAs are frozen as listed.
+4. `pradar corpus freeze manifest.json` validates the breadth rules and stores
+   the manifest under its content id; any later change is a new corpus.
+5. `pradar run --instance https://<forge> --model <model>`, subscribe the same
+   repositories from the timeline (import "all" so the frozen heads are
+   analysed), let the anti-rebond and the worker run, then score each item
+   from its detail page and read `/evaluation` and `/evaluation/report.json`.
