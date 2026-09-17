@@ -1,0 +1,27 @@
+name: ci
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+      - run: make verify-harness
+      - run: make fmt-check
+      - run: make tidy-check
+      - run: make vet
+      - run: make test
+      - uses: golangci/golangci-lint-action@v8
+        with:
+          version: v2.13.2
+      - run: make modernize

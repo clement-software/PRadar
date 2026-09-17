@@ -1,0 +1,27 @@
+{{template "head" .}}
+<section aria-labelledby="evaluation-title">
+  <h1 id="evaluation-title">Évaluation du corpus</h1>
+  {{if .Progress.CorpusID}}{{with .Progress}}
+  <p>Corpus <code>{{.CorpusID}}</code> · moteur {{.Report.Profile.Engine}} · modèle {{.Report.Profile.Model}} · prompt {{.Report.Profile.PromptVersion}} · skill <code>{{.Report.Profile.SkillVersion}}</code></p>
+  <p class="verdict verdict-{{.Report.Verdict}}"><strong>Verdict : {{.Report.Verdict}}</strong> — {{.Report.Passed}} réussies, {{.Report.Failed}} échouées, {{.Report.Critical}} erreurs critiques, {{.Report.Scored}}/{{len .Report.Items}} évaluées{{if .Report.Invalid}} · {{len .Report.Invalid}} scores invalidés par un changement de version{{end}}</p>
+  <p><a href="/evaluation/report.json">Exporter le rapport JSON</a></p>
+  <table>
+    <caption>Une ligne par pull request figée</caption>
+    <thead><tr><th scope="col">Pull request</th><th scope="col">Tête figée</th><th scope="col">Évaluée</th><th scope="col">Réussie</th><th scope="col">Erreur critique</th><th scope="col">Compréhension</th><th scope="col">Durée d'analyse</th></tr></thead>
+    <tbody>
+    {{range .Report.Items}}
+      <tr>
+        <td><a href="{{prLink .PullRequest}}">{{.PullRequest}}</a></td>
+        <td><code>{{.HeadSHA}}</code></td>
+        <td>{{if .Scored}}oui{{else}}non{{end}}</td>
+        <td>{{if .Passed}}oui{{else if .Scored}}non{{else}}—{{end}}</td>
+        <td>{{if .Critical}}oui{{else}}non{{end}}</td>
+        <td>{{if .Scored}}{{duration .Elapsed}}{{else}}—{{end}}</td>
+        <td>{{if .Scored}}{{duration .Duration}}{{else}}—{{end}}</td>
+      </tr>
+    {{end}}
+    </tbody>
+  </table>
+  {{end}}{{end}}
+</section>
+{{template "foot" .}}

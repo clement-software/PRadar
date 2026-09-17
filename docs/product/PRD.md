@@ -88,8 +88,11 @@ personnelle pour l'utilisateur.
   - provenance : moteur, modèle, versions du prompt et du skill, durée et usage
     lorsque disponibles.
 - Le contrat ne contient ni score de pertinence ni sujets.
-- L'identité d'une analyse est formée par la pull request, le SHA de tête, la
-  version du prompt, la version du skill, le moteur et le modèle.
+- L'identité d'une analyse est formée par la pull request, sa révision d'entrée,
+  la version du prompt, la version du skill, le moteur et le modèle. La révision
+  d'entrée comprend le SHA de tête, le titre et la description normalisés ainsi
+  qu'une génération incrémentée lors d'une réouverture ; chaque déclencheur
+  d'analyse possède donc une identité distincte.
 - Un rejeu avec une identité différente crée une nouvelle analyse et conserve
   les analyses antérieures.
 - Une analyse échouée est retentée trois fois avec un délai croissant. Après le
@@ -146,8 +149,11 @@ personnelle pour l'utilisateur.
   prochain lancement garantit la continuité.
 - Le moteur d'analyse et le stockage restent des frontières remplaçables. Leur
   architecture de production n'est pas décidée par ce PRD.
-- SQLite et `show-me` sont utilisés par le démonstrateur et restent des
-  hypothèses jusqu'à validation de celui-ci.
+- Le mécanisme de coordination locale SQLite — identité idempotente, réclamation
+  atomique par bail et publication conditionnelle — est validé par le prototype
+  `codex/prototype/pradar-integration-spike` au commit `2007e82`. Le driver, la
+  compatibilité Forgejo réelle et l'utilité de `show-me` restent des hypothèses
+  jusqu'à validation du démonstrateur complet.
 
 ## Démonstrateur vertical
 
