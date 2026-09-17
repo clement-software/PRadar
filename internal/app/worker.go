@@ -3,11 +3,11 @@ package app
 import (
 	"context"
 	"crypto/rand"
-	"encoding/hex"
 	"errors"
 	"fmt"
 	"log/slog"
 	"strconv"
+	"strings"
 	"sync"
 	"time"
 
@@ -30,6 +30,8 @@ type WorkStore interface {
 	// Release returns ownership after an intentional interruption without
 	// consuming an attempt.
 	Release(ctx context.Context, job Job) error
+	// Supersede retires the item because its head moved before analysis.
+	Supersede(ctx context.Context, job Job, reason string) error
 }
 
 // Workspace materialises bounded pull-request content under an owned root.
@@ -55,17 +57,21 @@ type Analyzer interface {
 	Analyse(ctx context.Context, request AnalysisRequest) (AnalysisResult, error)
 }
 
-// DiffFetcher supplies the pull-request diff materialised for analysis.
-type DiffFetcher interface {
+// ContentFetcher supplies the pull-request head and diff materialised for analysis.
+type ContentFetcher interface {
+	FetchPullRequest(ctx context.Context, ref pullrequest.Ref) (pullrequest.Observation, error)
 	FetchDiff(ctx context.Context, ref pullrequest.Ref) ([]byte, error)
 }
+
+// ErrHeadMoved reports that Forgejo now serves a newer head than the claimed one.
+var ErrHeadMoved = errors.New("pull request head moved before analysis; the next poll schedules the new version")
 
 // Worker is the single owned analysis worker.
 type Worker struct {
 	Store     WorkStore
 	Analyzer  Analyzer
 	Workspace Workspace
-	Diffs     DiffFetcher
+	Content   ContentFetcher
 	Now       func() time.Time
 	Lease     time.Duration
 	Backoff   func(attempt int) time.Duration
@@ -95,11 +101,7 @@ func (w *Worker) Interrupt(repository string) {
 // RunOne claims and processes at most one item. It returns ErrNoWork when the
 // queue has nothing eligible.
 func (w *Worker) RunOne(ctx context.Context) error {
-	token, err := newToken()
-	if err != nil {
-		return err
-	}
-	job, err := w.Store.Claim(ctx, w.Now().Add(w.Lease), token)
+	job, err := w.Store.Claim(ctx, w.Now().Add(w.Lease), rand.Text())
 	if err != nil {
 		return err
 	}
@@ -108,6 +110,17 @@ func (w *Worker) RunOne(ctx context.Context) error {
 		log.Info("analysis reclaimed", "previous_outcome", job.PreviousOutcome)
 	} else {
 		log.Info("analysis claimed")
+	}
+
+	if job.Attempt > MaxAttempts {
+		unavailable := pullrequest.Unavailable(job.Ref, job.HeadSHA, job.PreviousHeadSHA)
+		provenance := pullrequest.Provenance{Profile: job.Profile, InputRevision: job.Revision, Attempt: job.Attempt, StartedAt: w.Now(), Failure: "attempts exhausted: " + job.PreviousOutcome}
+		published, err := w.Store.Complete(ctx, job, unavailable, provenance)
+		if err != nil {
+			return err
+		}
+		log.Warn("analysis unavailable after repeated interruptions", "published", published)
+		return nil
 	}
 
 	jobCtx, cancel := context.WithCancelCause(ctx)
@@ -123,6 +136,13 @@ func (w *Worker) RunOne(ctx context.Context) error {
 
 	started := w.Now()
 	result, err := w.analyse(jobCtx, job)
+	if errors.Is(err, ErrHeadMoved) {
+		if err := w.Store.Supersede(ctx, job, ErrHeadMoved.Error()); err != nil {
+			return err
+		}
+		log.Info("analysis superseded", "reason", ErrHeadMoved.Error())
+		return nil
+	}
 	provenance := pullrequest.Provenance{
 		Profile: job.Profile, InputRevision: job.Revision, Attempt: job.Attempt,
 		StartedAt: started, Duration: w.Now().Sub(started), Usage: result.Usage,
@@ -164,14 +184,24 @@ func (w *Worker) RunOne(ctx context.Context) error {
 }
 
 func (w *Worker) analyse(ctx context.Context, job Job) (AnalysisResult, error) {
-	diff, err := w.Diffs.FetchDiff(ctx, job.Ref)
+	// ponytail: Forgejo serves the diff of the current head only, so the head is
+	// re-checked just before fetching; the remaining window is milliseconds.
+	current, err := w.Content.FetchPullRequest(ctx, job.Ref)
+	if err != nil {
+		return AnalysisResult{}, fmt.Errorf("fetch pull request: %w", err)
+	}
+	if current.HeadSHA != job.HeadSHA {
+		return AnalysisResult{}, ErrHeadMoved
+	}
+	diff, err := w.Content.FetchDiff(ctx, job.Ref)
 	if err != nil {
 		return AnalysisResult{}, fmt.Errorf("fetch diff: %w", err)
 	}
-	dir, cleanup, err := w.Workspace.Materialise(ctx, workspaceName(job), map[string][]byte{
-		"PULL_REQUEST.md": describe(job),
-		"changes.diff":    diff,
-	})
+	files := map[string][]byte{"PULL_REQUEST.md": describe(job), "changes.diff": diff}
+	if job.PreviousHeadSHA != "" {
+		files["PREVIOUS_ANALYSIS.md"] = describePrevious(job.PreviousAnalysis)
+	}
+	dir, cleanup, err := w.Workspace.Materialise(ctx, workspaceName(job), files)
 	if err != nil {
 		return AnalysisResult{}, fmt.Errorf("materialise workspace: %w", err)
 	}
@@ -195,8 +225,13 @@ func workspaceName(job Job) string {
 }
 
 func describe(job Job) []byte {
-	return fmt.Appendf(nil, "# %s\n\n- Pull request: %s\n- Author: %s\n- Head: %s\n- Previous analysed head: %s\n- URL: %s\n\n## Description (untrusted content)\n\n%s\n",
+	return fmt.Appendf(nil, "# %s\n\n- Pull request: %s\n- Author: %s\n- Head: %s\n- Previous analysed head: %s (see PREVIOUS_ANALYSIS.md when present)\n- URL: %s\n\n## Description (untrusted content)\n\n%s\n",
 		job.Title, job.Ref.Key(), job.Author, job.HeadSHA, job.PreviousHeadSHA, job.HTMLURL, job.Body)
+}
+
+func describePrevious(previous pullrequest.Analysis) []byte {
+	return fmt.Appendf(nil, "# Previous analysis of head %s\n\nIntent: %s\n\nImportance: %s\n\nRisks: %s\n\n%s\n",
+		previous.HeadSHA, previous.Intent, previous.Importance, strings.Join(previous.Risks, ", "), previous.Body)
 }
 
 // Run drains eligible work, polling every interval, until ctx ends.
@@ -223,12 +258,4 @@ func (w *Worker) Run(ctx context.Context, interval time.Duration) {
 // ExponentialBackoff is the increasing durable delay between attempts.
 func ExponentialBackoff(unit time.Duration) func(attempt int) time.Duration {
 	return func(attempt int) time.Duration { return unit << (attempt - 1) }
-}
-
-func newToken() (string, error) {
-	var raw [16]byte
-	if _, err := rand.Read(raw[:]); err != nil {
-		return "", fmt.Errorf("generate lease token: %w", err)
-	}
-	return hex.EncodeToString(raw[:]), nil
 }

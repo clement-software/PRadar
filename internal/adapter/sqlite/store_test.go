@@ -445,8 +445,8 @@ func TestReplay_RequiresChangedIdentityAndKeepsHistory(t *testing.T) {
 		t.Fatal(err)
 	}
 	job := h.claim("w2")
-	if job.Profile != changed || job.PreviousHeadSHA != "" {
-		t.Fatalf("replay job = %+v", job)
+	if job.Profile != changed || job.PreviousHeadSHA != "sha-1" || job.PreviousAnalysis.Intent != "intent" {
+		t.Fatalf("a replay must carry the same-head previous analysis as evidence: %+v", job)
 	}
 	if !h.complete(job) {
 		t.Fatal("replay of the latest version must publish")
@@ -570,5 +570,118 @@ func TestClaim_ReportsExpiredLeaseRecovery(t *testing.T) {
 	recovered := h.claim("restarted")
 	if recovered.Attempt != 2 || recovered.PreviousOutcome == "" {
 		t.Fatalf("recovered claim = attempt %d outcome %q", recovered.Attempt, recovered.PreviousOutcome)
+	}
+}
+
+func TestClaim_SkipsWorkOfStoppedAbonnementEvenAfterLeaseExpiry(t *testing.T) {
+	t.Parallel()
+	h := open(t)
+	h.observe("sha-1", true)
+	h.clock.Advance(11 * time.Minute)
+	h.claim("crashed")
+	if err := h.store.Unsubscribe(h.ctx, ref.Repository); err != nil {
+		t.Fatal(err)
+	}
+	h.clock.Advance(time.Hour) // lease expired, abonnement stopped
+	h.noWork()
+}
+
+func TestComplete_RequiresUnexpiredLease(t *testing.T) {
+	t.Parallel()
+	h := open(t)
+	h.observe("sha-1", true)
+	h.clock.Advance(11 * time.Minute)
+	job := h.claim("slow")
+	h.clock.Advance(2 * time.Minute) // lease expired, nobody reclaimed yet
+	if _, err := h.store.Complete(h.ctx, job, okAnalysis(job), pullrequest.Provenance{}); !errors.Is(err, app.ErrLeaseLost) {
+		t.Fatalf("Complete after expiry = %v, want ErrLeaseLost", err)
+	}
+	if err := h.store.Retry(h.ctx, job, h.clock.Now(), "x"); !errors.Is(err, app.ErrLeaseLost) {
+		t.Fatalf("Retry after expiry = %v, want ErrLeaseLost", err)
+	}
+	if len(h.cards()) != 0 {
+		t.Fatal("an expired owner must not publish")
+	}
+	if recovered := h.claim("next"); recovered.Attempt != 2 {
+		t.Fatalf("recovered attempt = %d", recovered.Attempt)
+	}
+}
+
+func TestSupersede_RetiresClaimedWorkWithoutConsumingAttempt(t *testing.T) {
+	t.Parallel()
+	h := open(t)
+	h.observe("sha-1", true)
+	h.clock.Advance(11 * time.Minute)
+	job := h.claim("w")
+	if err := h.store.Supersede(h.ctx, job, "head moved"); err != nil {
+		t.Fatal(err)
+	}
+	h.noWork()
+	if s := h.status(); s.Pending != 0 || s.Retrying != 0 {
+		t.Fatalf("status after supersede = %+v", s)
+	}
+	h.clock.Advance(time.Second)
+	h.observe("sha-2", true)
+	h.clock.Advance(11 * time.Minute)
+	if next := h.claim("w2"); next.HeadSHA != "sha-2" || next.Attempt != 1 {
+		t.Fatalf("next claim = %+v", next)
+	}
+}
+
+func TestObserve_RevertedRevisionRepublishesItsAnalysis(t *testing.T) {
+	t.Parallel()
+	h := open(t)
+	h.observe("sha-1", true)
+	h.clock.Advance(11 * time.Minute)
+	h.complete(h.claim("a"))
+	h.clock.Advance(time.Second)
+	retitled := h.observeTitled("sha-1", "Retitled")
+	if retitled.Kind != pullrequest.DecideSchedule {
+		t.Fatal("a title change must schedule")
+	}
+	h.clock.Advance(11 * time.Minute)
+	h.complete(h.claim("b"))
+	h.clock.Advance(time.Second)
+	h.observe("sha-1", true) // title reverted: the first identity is the latest again
+	h.noWork()
+	if cards := h.cards(); len(cards) != 1 || cards[0].Title != "Title" {
+		t.Fatalf("reverted revision must show its own analysis: %+v", cards)
+	}
+	if d := h.detail(); !d.HasCard || d.Card.Unread != true {
+		t.Fatalf("republished carte must be current and unread: %+v", d)
+	}
+}
+
+func (h *harness) observeTitled(head, title string) pullrequest.Decision {
+	h.t.Helper()
+	decision, err := h.store.ObservePullRequest(h.ctx, app.ObservationRequest{
+		Observation: pullrequest.Observation{Ref: ref, Title: title, Body: "Body", Author: "alice", State: pullrequest.StateOpen,
+			HeadSHA: head, HTMLURL: "https://forge.test/acme/widgets/pulls/42", UpdatedAt: h.clock.Now()},
+		Profile: profile, Schedule: true, NotBefore: h.clock.Now().Add(10 * time.Minute),
+	})
+	if err != nil {
+		h.t.Fatal(err)
+	}
+	return decision
+}
+
+func TestReplay_SupersedesQueuedCandidate(t *testing.T) {
+	t.Parallel()
+	h := open(t)
+	h.observe("sha-1", true)
+	h.clock.Advance(11 * time.Minute)
+	h.complete(h.claim("a"))
+	h.clock.Advance(time.Second)
+	h.observe("sha-2", true) // queued behind the anti-rebond
+	changed := profile
+	changed.PromptVersion = "p2"
+	if err := h.store.Replay(h.ctx, ref, changed, h.clock.Now()); err != nil {
+		t.Fatal(err)
+	}
+	if s := h.status(); s.Pending != 1 {
+		t.Fatalf("replay must supersede the queued sibling: pending = %d", s.Pending)
+	}
+	if job := h.claim("r"); job.Profile != changed {
+		t.Fatalf("claimed job = %+v", job)
 	}
 }

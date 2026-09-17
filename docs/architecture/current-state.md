@@ -11,7 +11,9 @@ PRD gate, not the production design (see `target-state.md`).
 `cmd/pradar` is one macOS process. `pradar run` opens one SQLite database in
 WAL mode, scavenges the owned workspace root, starts one polling collector and
 one analysis worker under a root context, and serves a loopback visualizer.
-`--controlled` substitutes a fixture Forgejo and a deterministic analyzer.
+`--controlled` substitutes a fixture Forgejo and a deterministic analyzer and
+sets the anti-rebond to zero so the demo shows a carte within seconds; live
+mode keeps the ten-minute window of ADR-0004.
 `--instance <https url> --model <model>` uses the real instance with the
 token read from the Keychain (`pradar token set`) and the restricted Claude
 CLI analyzer.

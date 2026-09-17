@@ -43,9 +43,9 @@ func start(t *testing.T) *visualizer {
 	log := slog.New(slog.NewTextHandler(io.Discard, nil))
 	forge := controlled.Forge{Now: time.Now}
 	coll := &app.Collector{Forge: forge, Store: store, Profile: profile, Now: time.Now, Log: log}
-	worker := &app.Worker{Store: store, Analyzer: controlled.Analyzer{}, Workspace: noWorkspace{}, Diffs: forge, Now: time.Now,
+	worker := &app.Worker{Store: store, Analyzer: controlled.Analyzer{}, Workspace: noWorkspace{}, Content: forge, Now: time.Now,
 		Lease: time.Minute, Backoff: app.ExponentialBackoff(time.Minute), Log: log}
-	evaluator := &app.Evaluator{Store: store, Read: store, Profile: profile, Now: time.Now}
+	evaluator := &app.Evaluator{Store: store, Read: store, Profile: profile, Presentation: ui.PresentationVersion, Now: time.Now}
 	server := &ui.Server{Timeline: &app.Timeline{Store: store, Profile: profile, Now: time.Now}, Collector: coll, Evaluator: evaluator, Log: log,
 		ParseRepositoryURL: func(raw string) (string, string, error) { return controlled.Repository, raw, nil }}
 	ctx, cancel := context.WithCancel(ctx)
@@ -118,6 +118,15 @@ func TestVisualizer_ShowsCarteAndDetailAfterControlledAnalysis(t *testing.T) {
 	}
 	if status := v.post("/pr/controlled/demo%231", url.Values{"action": {"read"}}); status != http.StatusSeeOther {
 		t.Fatalf("read action status %d", status)
+	}
+	response, err := v.client.PostForm(v.base+"/pr/controlled/demo%231", url.Values{"action": {"read"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	location := response.Header.Get("Location")
+	_ = response.Body.Close()
+	if status, followed := v.get(location); status != http.StatusOK || !strings.Contains(followed, "Marquée comme lue") {
+		t.Fatalf("redirect target %q must open the detail with its notice: %d", location, status)
 	}
 	if _, body := v.get("/?unread=1"); strings.Contains(body, `<li class="card`) {
 		t.Fatal("read carte must leave the unread filter")
@@ -228,6 +237,15 @@ func TestVisualizer_AccessibilityAndThemes(t *testing.T) {
 	if !strings.Contains(js, `securityLevel: "strict"`) {
 		t.Error("Mermaid must run in strict mode")
 	}
+	response, err := v.client.Get(v.base + "/")
+	if err != nil {
+		t.Fatal(err)
+	}
+	_ = response.Body.Close()
+	csp := response.Header.Get("Content-Security-Policy")
+	if !strings.Contains(csp, "script-src 'self';") || !strings.Contains(csp, "style-src 'self' 'unsafe-inline'") {
+		t.Errorf("CSP must keep scripts local while letting Mermaid style its SVG: %s", csp)
+	}
 	for _, pair := range [][2]string{{"#17202a", "#f6f8fb"}, {"#4b5563", "#ffffff"}, {"#e6edf3", "#0f1419"}, {"#b3bcc7", "#161c24"}, {"#8ab4ff", "#161c24"}, {"#2f6fed", "#ffffff"}} {
 		if ratio := contrast(pair[0], pair[1]); ratio < 4.5 {
 			t.Errorf("contrast %s on %s = %.2f, below WCAG AA 4.5", pair[0], pair[1], ratio)
@@ -264,8 +282,8 @@ func contrast(fg, bg string) float64 {
 func TestVisualizer_EvaluationScorecardAndReport(t *testing.T) {
 	t.Parallel()
 	v := start(t)
-	if status, body := v.get("/evaluation"); status != http.StatusOK || !strings.Contains(body, "Aucun corpus") {
-		t.Fatalf("evaluation without corpus: %d %s", status, body)
+	if status, body := v.get("/evaluation"); status != http.StatusOK || !strings.Contains(body, "Aucun corpus") || strings.Contains(body, "Verdict :") {
+		t.Fatalf("evaluation without corpus must show the hint and no empty report: %d %s", status, body)
 	}
 	if _, err := v.coll.Subscribe(t.Context(), app.SubscribeRequest{Repository: controlled.Repository, HTMLURL: "https://forge.example/controlled/demo"}); err != nil {
 		t.Fatal(err)
@@ -306,7 +324,7 @@ func TestVisualizer_EvaluationScorecardAndReport(t *testing.T) {
 		t.Fatalf("evaluation page: %d\n%s", status, body)
 	}
 	_, report := v.get("/evaluation/report.json")
-	if !strings.Contains(report, `"verdict": "incomplete"`) || !strings.Contains(report, `"scored": 1`) || strings.Contains(report, "Transient 429") {
+	if !strings.Contains(report, `"verdict": "incomplete"`) || !strings.Contains(report, `"scored": 1`) || !strings.Contains(report, `"answers"`) || !strings.Contains(report, `"presentation": "visualizer-v1"`) || strings.Contains(report, "Transient 429") {
 		t.Fatalf("report export: %s", report)
 	}
 }

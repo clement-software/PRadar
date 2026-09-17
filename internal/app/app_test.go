@@ -5,8 +5,10 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"maps"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"sync"
 	"testing"
@@ -117,6 +119,7 @@ type fakeWorkspace struct {
 	mu      sync.Mutex
 	root    string
 	cleaned []string
+	files   [][]string
 }
 
 func (w *fakeWorkspace) Materialise(_ context.Context, name string, files map[string][]byte) (string, func() error, error) {
@@ -124,6 +127,9 @@ func (w *fakeWorkspace) Materialise(_ context.Context, name string, files map[st
 	if err := os.MkdirAll(dir, 0o700); err != nil {
 		return "", nil, err
 	}
+	w.mu.Lock()
+	w.files = append(w.files, slices.Sorted(maps.Keys(files)))
+	w.mu.Unlock()
 	for name, content := range files {
 		if err := os.WriteFile(filepath.Join(dir, name), content, 0o600); err != nil {
 			return "", nil, err
@@ -188,7 +194,7 @@ func (f *fixture) wire() {
 	}
 	log := slog.New(slog.NewJSONHandler(f.logs, nil))
 	f.collector = &app.Collector{Forge: f.forge, Store: store, Profile: profile, Debounce: 10 * time.Minute, Now: f.clock.Now, Log: log}
-	f.worker = &app.Worker{Store: store, Analyzer: f.analyzer, Workspace: f.workspace, Diffs: f.forge, Now: f.clock.Now,
+	f.worker = &app.Worker{Store: store, Analyzer: f.analyzer, Workspace: f.workspace, Content: f.forge, Now: f.clock.Now,
 		Lease: time.Minute, Backoff: app.ExponentialBackoff(time.Minute), Log: log}
 	f.collector.Interrupt = f.worker.Interrupt
 	f.timeline = &app.Timeline{Store: store, Profile: profile, Now: f.clock.Now}
@@ -372,7 +378,7 @@ func TestReconcile_CloseMergeAndReopen(t *testing.T) {
 	}
 }
 
-func TestWorker_ThirdFailurePublishesUnavailable(t *testing.T) {
+func TestAnalysis_ThirdFailurePublishesUnavailable(t *testing.T) {
 	t.Parallel()
 	f := newFixture(t)
 	f.subscribe(app.ImportTen)
@@ -623,5 +629,107 @@ func TestReconcile_TitleBodyAndHeadChangesScheduleDistinctRevisions(t *testing.T
 	}
 	if cards := f.cards(app.Filter{}); cards[0].Analysis.HeadSHA != "sha-2" || f.status().Pending != 0 {
 		t.Fatalf("stale observation changed durable state: %+v", cards)
+	}
+}
+
+func TestWorker_SupersedesWhenHeadMovedBeforeFetch(t *testing.T) {
+	t.Parallel()
+	f := newFixture(t)
+	f.subscribe(app.ImportTen)
+	f.clock.Advance(11 * time.Minute)
+	f.forge.set(observation(42, "sha-2", f.clock.Now())) // commit lands after the claim window opened
+	if err := f.runOne(); err != nil {
+		t.Fatal(err)
+	}
+	if len(f.analyzer.requests) != 0 {
+		t.Fatal("the engine must not analyse a diff that no longer matches the claimed head")
+	}
+	if s := f.status(); s.Pending != 0 || s.Retrying != 0 {
+		t.Fatalf("superseded work must not stay pending or count as a retry: %+v", s)
+	}
+	if err := f.collector.ReconcileAll(f.ctx); err != nil {
+		t.Fatal(err)
+	}
+	f.drain()
+	cards := f.cards(app.Filter{})
+	if len(cards) != 1 || cards[0].Analysis.HeadSHA != "sha-2" {
+		t.Fatalf("the moved head must be analysed by the next poll: %+v", cards)
+	}
+	// The previous analysis is materialised as evidence for the next version.
+	f.forge.set(observation(42, "sha-3", f.clock.Now().Add(time.Minute)))
+	if err := f.collector.ReconcileAll(f.ctx); err != nil {
+		t.Fatal(err)
+	}
+	f.drain()
+	last := f.workspace.files[len(f.workspace.files)-1]
+	if !slices.Contains(last, "PREVIOUS_ANALYSIS.md") || !slices.Contains(f.workspace.files[0], "changes.diff") || slices.Contains(f.workspace.files[0], "PREVIOUS_ANALYSIS.md") {
+		t.Fatalf("workspace files = %v", f.workspace.files)
+	}
+}
+
+func TestSubscribe_RejectsUnknownImportModeBeforePersisting(t *testing.T) {
+	t.Parallel()
+	f := newFixture(t)
+	if _, err := f.collector.Subscribe(f.ctx, app.SubscribeRequest{Repository: repo, Import: "everything"}); err == nil {
+		t.Fatal("unknown import mode accepted")
+	}
+	if _, err := f.store.GetSubscription(f.ctx, repo); !errors.Is(err, app.ErrNotFound) {
+		t.Fatalf("a rejected request must not persist an abonnement: %v", err)
+	}
+}
+
+func TestDeleteRepositoryData_InterruptsRunningAnalysis(t *testing.T) {
+	t.Parallel()
+	f := newFixture(t)
+	f.subscribe(app.ImportTen)
+	f.clock.Advance(11 * time.Minute)
+	f.analyzer.block = make(chan struct{})
+	done := make(chan error, 1)
+	go func() { done <- f.runOne() }()
+	waitFor(t, func() bool { f.analyzer.mu.Lock(); defer f.analyzer.mu.Unlock(); return len(f.analyzer.requests) == 1 })
+	if err := f.collector.DeleteRepositoryData(f.ctx, repo, true); err != nil {
+		t.Fatal(err)
+	}
+	if err := <-done; !errors.Is(err, app.ErrInterrupted) && !errors.Is(err, app.ErrLeaseLost) {
+		t.Fatalf("deletion must cancel the running analysis: %v", err)
+	}
+	if len(f.workspace.cleaned) != 1 {
+		t.Fatal("workspace must be cleaned after the interrupted analysis")
+	}
+}
+
+func TestReconcile_VanishedPullRequestDoesNotBlockAbonnement(t *testing.T) {
+	t.Parallel()
+	f := newFixture(t)
+	f.subscribe(app.ImportTen)
+	f.forge.set() // the pull request was deleted on Forgejo: listing is empty, fetching it is a 404
+	if err := f.collector.ReconcileAll(f.ctx); err != nil {
+		t.Fatal(err)
+	}
+	if s := f.status(); len(s.Blocked) != 0 || s.LastSyncAt.IsZero() {
+		t.Fatalf("a vanished pull request must not block the abonnement: %+v", s)
+	}
+}
+
+func TestWorker_RepeatedInterruptionsBecomeUnavailable(t *testing.T) {
+	t.Parallel()
+	f := newFixture(t)
+	f.subscribe(app.ImportTen)
+	f.clock.Advance(11 * time.Minute)
+	for range app.MaxAttempts {
+		if _, err := f.store.Claim(f.ctx, f.clock.Now().Add(time.Minute), "crashed-worker"); err != nil {
+			t.Fatal(err)
+		}
+		f.clock.Advance(2 * time.Minute) // the process died; the lease expired
+	}
+	if err := f.runOne(); err != nil {
+		t.Fatal(err)
+	}
+	if len(f.analyzer.requests) != 0 {
+		t.Fatal("no fourth invocation after three interrupted attempts")
+	}
+	cards := f.cards(app.Filter{})
+	if len(cards) != 1 || cards[0].Analysis.Status != pullrequest.AnalysisUnavailable {
+		t.Fatalf("exhausted attempts must publish analyse indisponible: %+v", cards)
 	}
 }

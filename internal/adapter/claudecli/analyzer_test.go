@@ -114,6 +114,9 @@ func TestHelperProcess(_ *testing.T) {
 		time.Sleep(10 * time.Second)
 	case "flood":
 		_, _ = os.Stdout.Write(make([]byte, 1<<17))
+	case "stderr-flood":
+		_, _ = os.Stderr.Write(make([]byte, 1<<17))
+		emit(validAnalysis())
 	}
 	os.Exit(0)
 }
@@ -196,6 +199,14 @@ func TestClaudeAnalyzer_RejectsBadOutcomes(t *testing.T) {
 				t.Fatalf("%s: err = %v, want %q", mode, err, want)
 			}
 		})
+	}
+}
+
+func TestClaudeAnalyzer_ToleratesVerboseStderr(t *testing.T) {
+	t.Parallel()
+	a, _ := analyzer(t, "stderr-flood")
+	if _, err := a.Analyse(t.Context(), app.AnalysisRequest{Job: job, WorkspaceDir: workspace(t)}); err != nil {
+		t.Fatalf("a successful run with a large stderr must not fail: %v", err)
 	}
 }
 

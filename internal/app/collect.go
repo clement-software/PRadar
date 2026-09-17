@@ -60,6 +60,16 @@ const defaultImportLimit = 10
 // Subscribe checks repository access, activates the abonnement and imports the
 // requested initial set. An inaccessible repository leaves a blocked abonnement.
 func (c *Collector) Subscribe(ctx context.Context, request SubscribeRequest) (Subscription, error) {
+	limit := defaultImportLimit
+	switch request.Import {
+	case ImportNone:
+		limit = 0
+	case ImportAll:
+		limit = -1
+	case ImportTen, "":
+	default:
+		return Subscription{}, fmt.Errorf("unknown import mode %q", request.Import)
+	}
 	subscription := Subscription{
 		Repository:      request.Repository,
 		HTMLURL:         request.HTMLURL,
@@ -77,16 +87,6 @@ func (c *Collector) Subscribe(ctx context.Context, request SubscribeRequest) (Su
 	}
 	if err := c.Store.PutSubscription(ctx, subscription); err != nil {
 		return Subscription{}, err
-	}
-	limit := defaultImportLimit
-	switch request.Import {
-	case ImportNone:
-		limit = 0
-	case ImportAll:
-		limit = -1
-	case ImportTen, "":
-	default:
-		return Subscription{}, fmt.Errorf("unknown import mode %q", request.Import)
 	}
 	if err := c.reconcile(ctx, subscription, limit); err != nil {
 		return Subscription{}, err
@@ -114,6 +114,9 @@ func (c *Collector) DeleteRepositoryData(ctx context.Context, repository string,
 	}
 	if err := c.Store.DeleteRepositoryData(ctx, repository); err != nil {
 		return err
+	}
+	if c.Interrupt != nil {
+		c.Interrupt(repository)
 	}
 	c.Log.Warn("repository data deleted", "repository", repository)
 	return nil
@@ -174,6 +177,10 @@ func (c *Collector) reconcile(ctx context.Context, subscription Subscription, li
 			continue
 		}
 		observation, err := c.Forge.FetchPullRequest(ctx, ref)
+		if errors.Is(err, ErrNotFound) {
+			c.Log.Warn("pull request vanished from forgejo", "pull_request", ref.Key())
+			continue
+		}
 		if err != nil {
 			return c.block(ctx, subscription.Repository, err)
 		}

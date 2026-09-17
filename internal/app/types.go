@@ -59,14 +59,17 @@ type Job struct {
 	Generation      int64
 	HeadSHA         string
 	PreviousHeadSHA string
-	Title           string
-	Body            string
-	Author          string
-	HTMLURL         string
-	Revision        pullrequest.InputRevision
-	Profile         pullrequest.Profile
-	Attempt         int
-	LeaseToken      string
+	// PreviousAnalysis is the latest successful analysis of this pull
+	// request under another identity, materialised as prior evidence.
+	PreviousAnalysis pullrequest.Analysis
+	Title            string
+	Body             string
+	Author           string
+	HTMLURL          string
+	Revision         pullrequest.InputRevision
+	Profile          pullrequest.Profile
+	Attempt          int
+	LeaseToken       string
 	// PreviousOutcome explains why an earlier attempt ended: a technical
 	// failure message or an expired lease. Empty on the first attempt.
 	PreviousOutcome string
@@ -74,15 +77,14 @@ type Job struct {
 
 // Card is the visible projection of one pull request in the timeline.
 type Card struct {
-	Ref        pullrequest.Ref
-	Title      string
-	Author     string
-	State      pullrequest.State
-	HTMLURL    string
-	UpdatedAt  time.Time
-	ActivityAt time.Time
-	Unread     bool
-	Analysis   pullrequest.Analysis
+	Ref       pullrequest.Ref
+	Title     string
+	Author    string
+	State     pullrequest.State
+	HTMLURL   string
+	UpdatedAt time.Time
+	Unread    bool
+	Analysis  pullrequest.Analysis
 }
 
 // HistoryEntry is one analysis of the historique de pull request.
@@ -106,6 +108,7 @@ type Detail struct {
 	Card       Card
 	Archived   bool
 	HasCard    bool
+	Identity   pullrequest.Identity // identity of the published analysis when HasCard
 	Provenance pullrequest.Provenance
 	History    []HistoryEntry
 	Events     []Event

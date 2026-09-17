@@ -32,10 +32,11 @@ func (t *Timeline) Cards(ctx context.Context, filter Filter) ([]Card, error) {
 	if err != nil {
 		return nil, err
 	}
-	return slices.DeleteFunc(cards, func(card Card) bool { return !filter.matches(card) }), nil
+	return slices.DeleteFunc(cards, func(card Card) bool { return !filter.Matches(card) }), nil
 }
 
-func (f Filter) matches(card Card) bool {
+// Matches reports whether the carte satisfies every set criterion.
+func (f Filter) Matches(card Card) bool {
 	switch {
 	case f.UnreadOnly && !card.Unread,
 		f.Repository != "" && card.Ref.Repository != f.Repository,

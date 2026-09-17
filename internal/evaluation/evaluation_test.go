@@ -10,7 +10,10 @@ import (
 	"github.com/clement-software/PRadar/internal/pullrequest"
 )
 
-var profile = pullrequest.Profile{PromptVersion: "p1", SkillVersion: "s1", Engine: "claude-cli", Model: "m"}
+var (
+	profile  = pullrequest.Profile{PromptVersion: "p1", SkillVersion: "s1", Engine: "claude-cli", Model: "m"}
+	versions = evaluation.Versions{Contract: "pradar.analysis.v1", Presentation: "v1"}
+)
 
 func manifest() evaluation.Manifest {
 	var m evaluation.Manifest
@@ -32,7 +35,7 @@ func manifest() evaluation.Manifest {
 
 func score(item evaluation.Item, elapsed time.Duration, useful, critical bool) evaluation.Score {
 	return evaluation.Score{
-		Identity: pullrequest.Identity("id-" + item.Ref().Key()), HeadSHA: item.HeadSHA, Profile: profile, Elapsed: elapsed,
+		Identity: pullrequest.Identity("id-" + item.Ref().Key()), HeadSHA: item.HeadSHA, Profile: profile, Versions: versions, Elapsed: elapsed,
 		Answers: evaluation.Answers{Intent: true, Structure: true, Risks: true, ReviewNeeded: true}, Useful: useful, CriticalError: critical,
 	}
 }
@@ -109,23 +112,26 @@ func TestBuildReport_ThresholdEdgesAndInvalidation(t *testing.T) {
 		"all twenty passes":     {scores(20, false, false), evaluation.VerdictPass, 20},
 	}
 	for name, tc := range cases {
-		report := evaluation.BuildReport(m, tc.scores, profile, now)
+		report := evaluation.BuildReport(m, tc.scores, profile, versions, now)
 		if report.Verdict != tc.want || report.Passed != tc.passed || !report.Complete || len(report.Items) != 20 {
 			t.Errorf("%s: verdict=%s passed=%d complete=%v", name, report.Verdict, report.Passed, report.Complete)
 		}
 	}
 	incomplete := scores(20, false, false)
 	delete(incomplete, m.Items[5].Ref().Key())
-	if report := evaluation.BuildReport(m, incomplete, profile, now); report.Verdict != evaluation.VerdictIncomplete || report.Scored != 19 {
+	if report := evaluation.BuildReport(m, incomplete, profile, versions, now); report.Verdict != evaluation.VerdictIncomplete || report.Scored != 19 {
 		t.Fatalf("incomplete run = %s scored %d", report.Verdict, report.Scored)
 	}
 	changed := profile
 	changed.PromptVersion = "p2"
-	if report := evaluation.BuildReport(m, scores(20, false, false), changed, now); report.Verdict != evaluation.VerdictIncomplete || len(report.Invalid) != 20 {
+	if report := evaluation.BuildReport(m, scores(20, false, false), changed, versions, now); report.Verdict != evaluation.VerdictIncomplete || len(report.Invalid) != 20 {
 		t.Fatalf("a changed profile must invalidate every earlier score: %s %d", report.Verdict, len(report.Invalid))
 	}
-	first, _ := json.Marshal(evaluation.BuildReport(m, scores(16, false, false), profile, now))
-	second, _ := json.Marshal(evaluation.BuildReport(m, scores(16, false, false), profile, now))
+	if report := evaluation.BuildReport(m, scores(20, false, false), profile, evaluation.Versions{Contract: "pradar.analysis.v1", Presentation: "v2"}, now); report.Verdict != evaluation.VerdictIncomplete || len(report.Invalid) != 20 {
+		t.Fatalf("a changed presentation must invalidate every earlier score: %s %d", report.Verdict, len(report.Invalid))
+	}
+	first, _ := json.Marshal(evaluation.BuildReport(m, scores(16, false, false), profile, versions, now))
+	second, _ := json.Marshal(evaluation.BuildReport(m, scores(16, false, false), profile, versions, now))
 	if string(first) != string(second) {
 		t.Fatal("report generation must be deterministic")
 	}

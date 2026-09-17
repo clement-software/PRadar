@@ -19,7 +19,7 @@
     <li class="card importance-{{.Analysis.Importance}} {{if .Unread}}unread{{end}}">
       <article aria-labelledby="card-{{.Ref.Number}}">
         <p class="meta"><span class="repo">{{.Ref.Repository}}</span> #{{.Ref.Number}} · {{.Author}} · {{when .UpdatedAt}} · <span class="state state-{{.State}}">{{.State}}</span>{{if .Unread}} · <strong>non lue</strong>{{end}}</p>
-        <h2 id="card-{{.Ref.Number}}"><a href="{{prPath .Ref}}">{{.Title}}</a></h2>
+        <h2 id="card-{{.Ref.Number}}"><a href="{{prLink .Ref.Key}}">{{.Title}}</a></h2>
         {{if eq .Analysis.Status "unavailable"}}<p class="unavailable">Analyse indisponible</p>{{else}}<p class="intent">{{.Analysis.Intent}}</p>{{end}}
         <p class="badges"><span class="badge importance">Importance : {{.Analysis.Importance}}</span>{{range .Analysis.Risks}} <span class="badge risk">{{.}}</span>{{end}}</p>
         <p class="actions">{{with safeURL .HTMLURL}}<a href="{{.}}" rel="noopener noreferrer">Ouvrir dans Forgejo</a>{{else}}<span class="problem">Lien Forgejo invalide</span>{{end}}</p>

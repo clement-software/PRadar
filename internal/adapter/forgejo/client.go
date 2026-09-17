@@ -14,6 +14,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/clement-software/PRadar/internal/app"
 	"github.com/clement-software/PRadar/internal/pullrequest"
 )
 
@@ -60,6 +61,11 @@ func (e *APIError) Error() string {
 		return fmt.Sprintf("forgejo returned HTTP %d: %s", e.Status, e.Message)
 	}
 	return fmt.Sprintf("forgejo returned HTTP %d", e.Status)
+}
+
+// Is lets callers match a missing repository or pull request with app.ErrNotFound.
+func (e *APIError) Is(target error) bool {
+	return target == app.ErrNotFound && e.Status == http.StatusNotFound
 }
 
 // Transient reports whether the failure may succeed on retry.
@@ -287,7 +293,8 @@ func (c *Client) ListOpenPullRequests(ctx context.Context, repository string) ([
 			}
 			observations = append(observations, observation)
 		}
-		if len(items) < c.PageSize {
+		// ponytail: an instance may cap the page below PageSize, so only an empty page ends the listing.
+		if len(items) == 0 {
 			return observations, nil
 		}
 	}

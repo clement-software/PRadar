@@ -1,7 +1,7 @@
 {{template "head" .}}
 <section aria-labelledby="evaluation-title">
   <h1 id="evaluation-title">Évaluation du corpus</h1>
-  {{with .Progress}}
+  {{if .Progress.CorpusID}}{{with .Progress}}
   <p>Corpus <code>{{.CorpusID}}</code> · moteur {{.Report.Profile.Engine}} · modèle {{.Report.Profile.Model}} · prompt {{.Report.Profile.PromptVersion}} · skill <code>{{.Report.Profile.SkillVersion}}</code></p>
   <p class="verdict verdict-{{.Report.Verdict}}"><strong>Verdict : {{.Report.Verdict}}</strong> — {{.Report.Passed}} réussies, {{.Report.Failed}} échouées, {{.Report.Critical}} erreurs critiques, {{.Report.Scored}}/{{len .Report.Items}} évaluées{{if .Report.Invalid}} · {{len .Report.Invalid}} scores invalidés par un changement de version{{end}}</p>
   <p><a href="/evaluation/report.json">Exporter le rapport JSON</a></p>
@@ -22,6 +22,6 @@
     {{end}}
     </tbody>
   </table>
-  {{end}}
+  {{end}}{{end}}
 </section>
 {{template "foot" .}}

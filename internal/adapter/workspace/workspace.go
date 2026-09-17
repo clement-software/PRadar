@@ -26,6 +26,9 @@ func New(dir string, maxBytes int64) (*Root, error) {
 	if err != nil {
 		return nil, fmt.Errorf("resolve workspace root: %w", err)
 	}
+	if info, err := os.Lstat(absolute); err == nil && info.Mode()&os.ModeSymlink != 0 {
+		return nil, fmt.Errorf("workspace root %s is a symlink; refusing to adopt foreign state", absolute)
+	}
 	if err := os.MkdirAll(absolute, 0o700); err != nil {
 		return nil, fmt.Errorf("create workspace root: %w", err)
 	}

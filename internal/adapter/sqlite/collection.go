@@ -156,23 +156,18 @@ func (s *Store) ObservePullRequest(ctx context.Context, request app.ObservationR
 	observation := request.Observation
 	key := observation.Ref.Key()
 	now := s.now()
-	var decision pullrequest.Decision
-	err := s.tx(ctx, func(tx *sql.Tx) error {
-		var (
-			stored  pullrequest.Stored
-			updated int64
-		)
-		err := tx.QueryRowContext(ctx, `SELECT state, updated_unix, reopen_generation, input_revision FROM pull_requests WHERE pr_key = ?`, key).
-			Scan(&stored.State, &updated, &stored.ReopenGeneration, &stored.Revision)
-		switch {
-		case errors.Is(err, sql.ErrNoRows):
-		case err != nil:
-			return fmt.Errorf("read pull request: %w", err)
-		default:
-			stored.Exists = true
-			stored.UpdatedAt = fromUnix(updated)
+	// Most observations change nothing: decide from a plain read first so the
+	// writer lock is only taken when there is something to write. The decision
+	// is recomputed inside the transaction, which keeps compare-and-write atomic.
+	decision, err := s.decide(ctx, s.db, observation)
+	if err != nil || decision.Kind == pullrequest.DecideIgnore {
+		return decision, err
+	}
+	err = s.tx(ctx, func(tx *sql.Tx) error {
+		decision, err = s.decide(ctx, tx, observation)
+		if err != nil {
+			return err
 		}
-		decision = pullrequest.Reconcile(stored, observation)
 		switch decision.Kind {
 		case pullrequest.DecideIgnore:
 			return nil
@@ -192,6 +187,28 @@ UPDATE pull_requests SET state = ?, title = ?, html_url = ?, updated_unix = ?, a
 		return fmt.Errorf("unknown decision %d", decision.Kind)
 	})
 	return decision, err
+}
+
+type queryRower interface {
+	QueryRowContext(ctx context.Context, query string, args ...any) *sql.Row
+}
+
+func (s *Store) decide(ctx context.Context, q queryRower, observation pullrequest.Observation) (pullrequest.Decision, error) {
+	var (
+		stored  pullrequest.Stored
+		updated int64
+	)
+	err := q.QueryRowContext(ctx, `SELECT state, updated_unix, reopen_generation, input_revision FROM pull_requests WHERE pr_key = ?`, observation.Ref.Key()).
+		Scan(&stored.State, &updated, &stored.ReopenGeneration, &stored.Revision)
+	switch {
+	case errors.Is(err, sql.ErrNoRows):
+	case err != nil:
+		return pullrequest.Decision{}, fmt.Errorf("read pull request: %w", err)
+	default:
+		stored.Exists = true
+		stored.UpdatedAt = fromUnix(updated)
+	}
+	return pullrequest.Reconcile(stored, observation), nil
 }
 
 func (s *Store) schedule(ctx context.Context, tx *sql.Tx, request app.ObservationRequest, decision pullrequest.Decision, now time.Time) error {
@@ -233,6 +250,13 @@ ON CONFLICT(identity) DO UPDATE SET status = 'queued', generation = excluded.gen
 		string(identity), key, generation, observation.HeadSHA, string(decision.Revision), marshal(request.Profile),
 		request.NotBefore.Unix(), now.Unix()); err != nil {
 		return fmt.Errorf("schedule analysis: %w", err)
+	}
+	// A revision already analysed under this identity (e.g. a reverted title)
+	// republishes its existing result instead of waiting for work that never comes.
+	if _, err := tx.ExecContext(ctx, `
+UPDATE pull_requests SET published_identity = ?
+WHERE pr_key = ? AND EXISTS (SELECT 1 FROM analyses WHERE identity = ?)`, string(identity), key, string(identity)); err != nil {
+		return fmt.Errorf("republish analysed revision: %w", err)
 	}
 	return event(ctx, tx, key, now, "observed", "version "+observation.HeadSHA+" scheduled after anti-rebond")
 }

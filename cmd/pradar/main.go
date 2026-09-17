@@ -5,7 +5,6 @@ package main
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
 	"flag"
 	"fmt"
@@ -69,9 +68,9 @@ func runCorpus(args []string) error {
 	if err != nil {
 		return fmt.Errorf("read manifest: %w", err)
 	}
-	var manifest evaluation.Manifest
-	if err := json.Unmarshal(raw, &manifest); err != nil {
-		return fmt.Errorf("decode manifest: %w", err)
+	manifest, err := evaluation.ParseManifest(raw)
+	if err != nil {
+		return err
 	}
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt)
 	defer stop()
@@ -219,11 +218,11 @@ func runDemonstrator(args []string) error {
 	}
 
 	collector := &app.Collector{Forge: forge, Store: store, Profile: profile, Debounce: cfg.debounce, Now: now, Log: log}
-	worker := &app.Worker{Store: store, Analyzer: analyzer, Workspace: root, Diffs: forge, Now: now, Lease: cfg.lease,
+	worker := &app.Worker{Store: store, Analyzer: analyzer, Workspace: root, Content: forge, Now: now, Lease: cfg.lease,
 		Backoff: app.ExponentialBackoff(time.Minute), Log: log}
 	collector.Interrupt = worker.Interrupt
 	timeline := &app.Timeline{Store: store, Profile: profile, Now: now}
-	evaluator := &app.Evaluator{Store: store, Read: store, Profile: profile, Now: now}
+	evaluator := &app.Evaluator{Store: store, Read: store, Profile: profile, Presentation: ui.PresentationVersion, Now: now}
 	if cfg.controlled {
 		if _, err := collector.Subscribe(ctx, app.SubscribeRequest{Repository: controlled.Repository, HTMLURL: "https://forge.example/" + controlled.Repository, Import: app.ImportTen}); err != nil {
 			return err

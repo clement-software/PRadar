@@ -7,10 +7,10 @@
     <p class="actions">
       {{with safeURL .Card.HTMLURL}}<a href="{{.}}" rel="noopener noreferrer">Ouvrir dans Forgejo</a>{{else}}<span class="problem">Lien Forgejo invalide</span>{{end}}
       {{if and .HasCard (not .Archived)}}
-      <form method="post" action="{{prPath $.Ref}}"><input type="hidden" name="action" value="read"><button type="submit" {{if not .Card.Unread}}disabled{{end}}>Marquer comme lue</button></form>
-      <form method="post" action="{{prPath $.Ref}}"><input type="hidden" name="action" value="archive"><button type="submit">Archiver</button></form>
+      <form method="post" action="{{prLink $.Ref.Key}}"><input type="hidden" name="action" value="read"><button type="submit" {{if not .Card.Unread}}disabled{{end}}>Marquer comme lue</button></form>
+      <form method="post" action="{{prLink $.Ref.Key}}"><input type="hidden" name="action" value="archive"><button type="submit">Archiver</button></form>
       {{end}}
-      <form method="post" action="{{prPath $.Ref}}"><input type="hidden" name="action" value="replay"><button type="submit">Rejouer l'analyse</button></form>
+      <form method="post" action="{{prLink $.Ref.Key}}"><input type="hidden" name="action" value="replay"><button type="submit">Rejouer l'analyse</button></form>
     </p>
   </header>
 
@@ -50,7 +50,7 @@
     <h2 id="score-title">Compréhension en moins d'une minute</h2>
     <p class="meta">Corpus : {{$.CorpusItem.Size}} · {{$.CorpusItem.Authorship}} · {{$.CorpusItem.Category}} · tête figée <code>{{$.CorpusItem.HeadSHA}}</code> · {{$.CorpusItem.Reason}}</p>
     {{with $.Score}}<p class="notice" role="status">Score enregistré le {{when .RecordedAt}} : {{duration .Elapsed}}, {{if .Passed}}réussi{{else}}échoué{{end}}{{if .CriticalError}}, erreur factuelle critique{{end}}.</p>{{end}}
-    <form method="post" action="/evaluation/score/{{$.Ref.Repository}}%23{{$.Ref.Number}}" class="score" data-timer>
+    <form method="post" action="/evaluation/score{{prLink $.Ref.Key}}" class="score" data-timer>
       <p><button type="button" data-start>Démarrer le minuteur</button> <output data-elapsed aria-live="polite">0 s</output></p>
       <input type="hidden" name="elapsed_ms" value="0" data-elapsed-ms>
       <label>Temps mesuré (secondes, si le minuteur n'est pas utilisé) <input type="number" name="elapsed_seconds" min="1" step="1" data-elapsed-seconds></label>

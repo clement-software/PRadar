@@ -39,7 +39,8 @@ func (s Store) Lookup(ctx context.Context, account string) (forgejo.Token, error
 	var stdout, stderr bytes.Buffer
 	cmd.Stdout, cmd.Stderr = &stdout, &stderr
 	if err := cmd.Run(); err != nil {
-		if strings.Contains(stderr.String(), "could not be found") {
+		var exit *exec.ExitError
+		if strings.Contains(stderr.String(), "could not be found") || (errors.As(err, &exit) && exit.ExitCode() == 44) {
 			return "", ErrNotFound
 		}
 		return "", fmt.Errorf("keychain lookup failed: %w", err) // stderr never echoed: it may quote the item

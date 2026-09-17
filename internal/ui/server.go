@@ -27,6 +27,10 @@ import (
 //go:embed templates/*.html assets/*
 var content embed.FS
 
+// PresentationVersion changes whenever templates, styles or rendering change;
+// the evaluation report invalidates scores taken under another version.
+const PresentationVersion = "visualizer-v1"
+
 // Server serves the visualizer on loopback only.
 type Server struct {
 	Timeline  *app.Timeline
@@ -45,9 +49,8 @@ func (s *Server) handler() http.Handler {
 		"when":     func(t time.Time) string { return t.Local().Format("2006-01-02 15:04") },
 		"duration": func(d time.Duration) string { return d.Round(time.Second).String() },
 		"join":     strings.Join,
-		"prPath":   prPath,
 		"safeURL":  safeURL,
-		"prLink":   func(key string) string { return "/pr/" + strings.ReplaceAll(key, "#", "%23") },
+		"prLink":   prLink,
 	}).ParseFS(content, "templates/*.html"))
 	assets, _ := fs.Sub(content, "assets")
 
@@ -67,7 +70,9 @@ func (s *Server) handler() http.Handler {
 func securityHeaders(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		h := w.Header()
-		h.Set("Content-Security-Policy", "default-src 'none'; script-src 'self'; style-src 'self'; img-src 'self' data:; form-action 'self'; base-uri 'none'; frame-ancestors 'none'")
+		// Mermaid injects <style> elements into its SVG, so inline styles are
+		// allowed; scripts stay restricted to the embedded assets.
+		h.Set("Content-Security-Policy", "default-src 'none'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; form-action 'self'; base-uri 'none'; frame-ancestors 'none'")
 		h.Set("Referrer-Policy", "no-referrer")
 		h.Set("X-Content-Type-Options", "nosniff")
 		next.ServeHTTP(w, r)
@@ -117,7 +122,6 @@ type page struct {
 	States      []string
 	Importances []string
 	Ref         pullrequest.Ref
-	Replayed    bool
 	Progress    app.Progress
 	CorpusItem  *evaluation.Item
 	Score       *evaluation.Score
@@ -172,10 +176,10 @@ func (s *Server) timeline(w http.ResponseWriter, r *http.Request) {
 			}
 		}
 	}
-	data.Cards, err = s.Timeline.Cards(r.Context(), filter)
-	if err != nil {
-		s.fail(w, err)
-		return
+	for _, card := range all {
+		if filter.Matches(card) {
+			data.Cards = append(data.Cards, card)
+		}
 	}
 	s.render(w, "timeline.html", data)
 }
@@ -190,11 +194,9 @@ func safeURL(raw string) string {
 	return parsed.String()
 }
 
-// prPath is the detail path of a pull request; '#' must be escaped so it is
-// not taken as a fragment.
-func prPath(ref pullrequest.Ref) string {
-	return "/pr/" + ref.Repository + "%23" + strconv.FormatInt(ref.Number, 10)
-}
+// prLink is the detail path of a pull request key; '#' must be escaped so it
+// is not taken as a fragment.
+func prLink(key string) string { return "/pr/" + strings.ReplaceAll(key, "#", "%23") }
 
 func refFromPath(r *http.Request) (pullrequest.Ref, error) {
 	return pullrequest.ParseKey(r.PathValue("repository"))
@@ -260,7 +262,7 @@ func (s *Server) evaluationReport(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
 	encoder := json.NewEncoder(w)
 	encoder.SetIndent("", "  ")
-	_ = encoder.Encode(progress.Report)
+	_ = encoder.Encode(progress) // manifest, every score input and the report: enough to reproduce the verdict
 }
 
 func (s *Server) score(w http.ResponseWriter, r *http.Request) {
@@ -278,7 +280,7 @@ func (s *Server) score(w http.ResponseWriter, r *http.Request) {
 		},
 		Useful: r.FormValue("useful") == "on", CriticalError: r.FormValue("critical_error") == "on", Notes: r.FormValue("notes"),
 	}
-	redirect(w, r, prPath(ref), "Évaluation enregistrée", s.Evaluator.Score(r.Context(), ref, card))
+	redirect(w, r, "/pr/"+ref.Key(), "Évaluation enregistrée", s.Evaluator.Score(r.Context(), ref, card))
 }
 
 func (s *Server) action(w http.ResponseWriter, r *http.Request) {
@@ -299,7 +301,7 @@ func (s *Server) action(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "unknown action", http.StatusBadRequest)
 		return
 	}
-	target := prPath(ref)
+	target := "/pr/" + ref.Key()
 	if r.FormValue("action") == "archive" {
 		target = "/"
 	}
@@ -313,6 +315,7 @@ func redirect(w http.ResponseWriter, r *http.Request, target, notice string, err
 	} else if notice != "" {
 		values.Set("notice", notice)
 	}
+	// target is an unescaped path; url.URL escapes the '#' of a pull-request key exactly once.
 	location := url.URL{Path: target, RawQuery: values.Encode()}
 	http.Redirect(w, r, location.String(), http.StatusSeeOther)
 }
@@ -333,7 +336,7 @@ func (s *Server) subscribe(w http.ResponseWriter, r *http.Request) {
 		Repository: repository, HTMLURL: htmlURL, Import: app.ImportMode(r.FormValue("import")), ExcludedAuthors: excluded,
 	})
 	notice := "Abonnement actif : " + repository
-	if err == nil && !subscription.Active {
+	if err == nil && subscription.BlockedReason != "" {
 		err = errors.New("abonnement bloqué : " + subscription.BlockedReason)
 	}
 	redirect(w, r, "/", notice, err)

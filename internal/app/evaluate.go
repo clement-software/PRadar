@@ -26,10 +26,15 @@ type EvaluationStore interface {
 
 // Evaluator owns corpus freezing, scoring and the report.
 type Evaluator struct {
-	Store   EvaluationStore
-	Read    ReadModel
-	Profile pullrequest.Profile
-	Now     func() time.Time
+	Store        EvaluationStore
+	Read         ReadModel
+	Profile      pullrequest.Profile
+	Presentation string // visualizer version; changing it invalidates earlier scores
+	Now          func() time.Time
+}
+
+func (e *Evaluator) versions() evaluation.Versions {
+	return evaluation.Versions{Contract: pullrequest.SchemaVersion, Presentation: e.Presentation}
 }
 
 // Freeze validates and stores a manifest, returning its corpus id.
@@ -71,14 +76,8 @@ func (e *Evaluator) Score(ctx context.Context, ref pullrequest.Ref, card Scoreca
 	if !detail.HasCard {
 		return fmt.Errorf("%s has no published analysis to score", ref.Key())
 	}
-	var identity pullrequest.Identity
-	for _, entry := range detail.History {
-		if entry.Published {
-			identity = entry.Identity
-		}
-	}
 	score := evaluation.Score{
-		Identity: identity, HeadSHA: detail.Card.Analysis.HeadSHA, Profile: detail.Provenance.Profile,
+		Identity: detail.Identity, HeadSHA: detail.Card.Analysis.HeadSHA, Profile: detail.Provenance.Profile, Versions: e.versions(),
 		Elapsed: card.Elapsed, Answers: card.Answers, Useful: card.Useful, CriticalError: card.CriticalError, Notes: card.Notes,
 		AnalysisDuration: detail.Provenance.Duration, Usage: detail.Provenance.Usage, RecordedAt: e.Now().UTC(),
 	}
@@ -106,7 +105,7 @@ func (e *Evaluator) Report(ctx context.Context) (Progress, error) {
 	if err != nil {
 		return Progress{}, err
 	}
-	return Progress{CorpusID: id, Manifest: manifest, Scores: scores, Report: evaluation.BuildReport(manifest, scores, e.Profile, e.Now())}, nil
+	return Progress{CorpusID: id, Manifest: manifest, Scores: scores, Report: evaluation.BuildReport(manifest, scores, e.Profile, e.versions(), e.Now())}, nil
 }
 
 // Item returns the corpus item of a pull request when it is part of the current corpus.

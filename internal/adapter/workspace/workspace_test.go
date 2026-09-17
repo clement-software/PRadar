@@ -102,3 +102,21 @@ func TestWorkspace_RejectsMaliciousNamesSymlinksAndOversizedInput(t *testing.T) 
 		t.Fatal("cleanup must not touch the symlink target")
 	}
 }
+
+func TestWorkspace_RefusesSymlinkedRoot(t *testing.T) {
+	t.Parallel()
+	victim := t.TempDir()
+	if err := os.WriteFile(filepath.Join(victim, "keep"), []byte("x"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	link := filepath.Join(t.TempDir(), "root")
+	if err := os.Symlink(victim, link); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := workspace.New(link, 1<<20); err == nil {
+		t.Fatal("a symlinked root must be refused before any scavenging")
+	}
+	if _, err := os.Stat(filepath.Join(victim, "keep")); err != nil {
+		t.Fatal("the symlink target must be untouched")
+	}
+}

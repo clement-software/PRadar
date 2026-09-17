@@ -66,6 +66,11 @@ func pr(number int64, state string, updated time.Time) map[string]any {
 
 func writeJSON(w http.ResponseWriter, v any) { _ = json.NewEncoder(w).Encode(v) }
 
+func mustAtoi(s string) int {
+	n, _ := strconv.Atoi(s)
+	return n
+}
+
 func TestClient_AuthenticationAndURLMapping(t *testing.T) {
 	t.Parallel()
 	f := newFakeForgejo(t)
@@ -108,7 +113,7 @@ func TestClient_PaginationDraftsAndStates(t *testing.T) {
 			t.Errorf("unexpected query %s", r.URL.RawQuery)
 		}
 		page, _ := strconv.Atoi(r.URL.Query().Get("page"))
-		limit, _ := strconv.Atoi(r.URL.Query().Get("limit"))
+		limit := min(2, mustAtoi(r.URL.Query().Get("limit")))
 		start := min((page-1)*limit, len(open))
 		end := min(start+limit, len(open))
 		writeJSON(w, open[start:end])
@@ -121,6 +126,7 @@ func TestClient_PaginationDraftsAndStates(t *testing.T) {
 		_, _ = w.Write([]byte(`{"number": 7, "state": "open"`))
 	})
 	client := f.client()
+	client.PageSize = 10 // the fake caps pages at two items, like an instance with a lower MAX_RESPONSE_ITEMS
 	observations, err := client.ListOpenPullRequests(t.Context(), "acme/widgets")
 	if err != nil {
 		t.Fatal(err)

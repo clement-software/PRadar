@@ -172,7 +172,7 @@ func (a *Analyzer) Analyse(ctx context.Context, request app.AnalysisRequest) (ap
 	cmd.Stdin = bytes.NewReader(input)
 	cmd.WaitDelay = 5 * time.Second
 	stdout := &cappedBuffer{limit: a.MaxOutput}
-	stderr := &cappedBuffer{limit: 64 << 10}
+	stderr := &headBuffer{limit: 64 << 10}
 	cmd.Stdout, cmd.Stderr = stdout, stderr
 	err = cmd.Run()
 	if stdout.overflow {
@@ -217,6 +217,22 @@ func truncate(s string, n int) string {
 	}
 	return s[:n] + "…"
 }
+
+// headBuffer keeps the first limit bytes and silently drops the rest; used
+// for stderr, which must never turn a successful run into a failure.
+type headBuffer struct {
+	buf   bytes.Buffer
+	limit int
+}
+
+func (b *headBuffer) Write(p []byte) (int, error) {
+	if room := b.limit - b.buf.Len(); room > 0 {
+		b.buf.Write(p[:min(room, len(p))])
+	}
+	return len(p), nil
+}
+
+func (b *headBuffer) String() string { return b.buf.String() }
 
 // cappedBuffer stops accepting bytes past its limit and remembers overflowing.
 // It deliberately does not embed bytes.Buffer: a promoted ReadFrom would let

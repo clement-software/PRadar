@@ -11,19 +11,19 @@ import (
 	"github.com/clement-software/PRadar/internal/pullrequest"
 )
 
-const cardColumns = `p.repository, p.number, p.title, p.author, p.state, p.html_url, p.updated_unix, p.activity_unix, p.unread, a.result_json`
+const cardColumns = `p.repository, p.number, p.title, p.author, p.state, p.html_url, p.updated_unix, p.unread, a.result_json`
 
 func scanCard(row interface{ Scan(...any) error }) (app.Card, error) {
 	var (
-		card              app.Card
-		updated, activity int64
-		result            string
+		card    app.Card
+		updated int64
+		result  string
 	)
 	if err := row.Scan(&card.Ref.Repository, &card.Ref.Number, &card.Title, &card.Author, &card.State, &card.HTMLURL,
-		&updated, &activity, &card.Unread, &result); err != nil {
+		&updated, &card.Unread, &result); err != nil {
 		return app.Card{}, err
 	}
-	card.UpdatedAt, card.ActivityAt = fromUnix(updated), fromUnix(activity)
+	card.UpdatedAt = fromUnix(updated)
 	if err := json.Unmarshal([]byte(result), &card.Analysis); err != nil {
 		return app.Card{}, fmt.Errorf("decode analysis: %w", err)
 	}
@@ -56,21 +56,21 @@ WHERE p.archived = 0 ORDER BY p.activity_unix DESC, p.pr_key`)
 func (s *Store) GetDetail(ctx context.Context, ref pullrequest.Ref) (app.Detail, error) {
 	key := ref.Key()
 	var (
-		detail            app.Detail
-		updated, activity int64
-		published         string
+		detail    app.Detail
+		updated   int64
+		published string
 	)
 	err := s.db.QueryRowContext(ctx, `
-SELECT repository, number, title, author, state, html_url, updated_unix, activity_unix, unread, archived, published_identity
+SELECT repository, number, title, author, state, html_url, updated_unix, unread, archived, published_identity
 FROM pull_requests WHERE pr_key = ?`, key).Scan(&detail.Card.Ref.Repository, &detail.Card.Ref.Number, &detail.Card.Title,
-		&detail.Card.Author, &detail.Card.State, &detail.Card.HTMLURL, &updated, &activity, &detail.Card.Unread, &detail.Archived, &published)
+		&detail.Card.Author, &detail.Card.State, &detail.Card.HTMLURL, &updated, &detail.Card.Unread, &detail.Archived, &published)
 	if errors.Is(err, sql.ErrNoRows) {
 		return app.Detail{}, app.ErrNotFound
 	}
 	if err != nil {
 		return app.Detail{}, fmt.Errorf("read pull request: %w", err)
 	}
-	detail.Card.UpdatedAt, detail.Card.ActivityAt = fromUnix(updated), fromUnix(activity)
+	detail.Card.UpdatedAt = fromUnix(updated)
 
 	rows, err := s.db.QueryContext(ctx, `
 SELECT identity, result_json, provenance_json, published, created_unix FROM analyses WHERE pr_key = ? ORDER BY id DESC`, key)
@@ -93,6 +93,7 @@ SELECT identity, result_json, provenance_json, published, created_unix FROM anal
 		entry.CreatedAt = fromUnix(created)
 		if string(entry.Identity) == published {
 			detail.HasCard = true
+			detail.Identity = entry.Identity
 			detail.Card.Analysis = entry.Analysis
 			detail.Provenance = entry.Provenance
 		}

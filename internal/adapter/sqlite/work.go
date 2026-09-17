@@ -30,9 +30,11 @@ UPDATE analysis_jobs
 SET status = 'running', attempts = attempts + 1, lease_until_unix = ?, lease_token = ?,
     last_error = CASE WHEN status = 'running' THEN 'lease expired before completion' ELSE last_error END
 WHERE id = (
-  SELECT id FROM analysis_jobs
-  WHERE (status = 'queued' AND available_unix <= ?) OR (status = 'running' AND lease_until_unix <= ?)
-  ORDER BY available_unix, id LIMIT 1
+  SELECT j.id FROM analysis_jobs j
+  JOIN pull_requests p ON p.pr_key = j.pr_key
+  JOIN subscriptions s ON s.repository = p.repository AND s.active = 1 AND s.generation = j.generation
+  WHERE (j.status = 'queued' AND j.available_unix <= ?) OR (j.status = 'running' AND j.lease_until_unix <= ?)
+  ORDER BY j.available_unix, j.id LIMIT 1
 )
 RETURNING id, identity, pr_key, generation, head_sha, input_revision, profile_json, attempts, last_error`,
 			leaseUntil.Unix(), token, now, now).
@@ -51,12 +53,20 @@ RETURNING id, identity, pr_key, generation, head_sha, input_revision, profile_js
 			Scan(&job.Ref.Repository, &job.Ref.Number, &job.Title, &job.Body, &job.Author, &job.HTMLURL); err != nil {
 			return fmt.Errorf("read claimed pull request: %w", err)
 		}
+		var previous string
 		err = tx.QueryRowContext(ctx, `
-SELECT head_sha FROM analyses WHERE pr_key = ? AND status = 'ok' AND head_sha <> ? ORDER BY id DESC LIMIT 1`, key, job.HeadSHA).
-			Scan(&job.PreviousHeadSHA)
-		if err != nil && !errors.Is(err, sql.ErrNoRows) {
-			return fmt.Errorf("read previous analysed head: %w", err)
+SELECT result_json FROM analyses WHERE pr_key = ? AND status = 'ok' AND identity <> ? ORDER BY id DESC LIMIT 1`, key, string(job.Identity)).
+			Scan(&previous)
+		switch {
+		case errors.Is(err, sql.ErrNoRows):
+			return nil
+		case err != nil:
+			return fmt.Errorf("read previous analysis: %w", err)
 		}
+		if err := json.Unmarshal([]byte(previous), &job.PreviousAnalysis); err != nil {
+			return fmt.Errorf("decode previous analysis: %w", err)
+		}
+		job.PreviousHeadSHA = job.PreviousAnalysis.HeadSHA
 		return nil
 	})
 	if err != nil {
@@ -78,7 +88,7 @@ func (s *Store) Complete(ctx context.Context, job app.Job, analysis pullrequest.
 		}
 		n, err := rowsAffected(tx.ExecContext(ctx, `
 UPDATE analysis_jobs SET status = ?, lease_until_unix = NULL, lease_token = NULL
-WHERE id = ? AND status = 'running' AND lease_token = ?`, status, job.ID, job.LeaseToken))
+WHERE id = ? AND status = 'running' AND lease_token = ? AND lease_until_unix > ?`, status, job.ID, job.LeaseToken, now.Unix()))
 		if err != nil {
 			return fmt.Errorf("complete analysis work: %w", err)
 		}
@@ -116,7 +126,7 @@ VALUES (?, ?, ?, ?, ?, ?, ?, ?) ON CONFLICT(identity) DO NOTHING`,
 func (s *Store) Retry(ctx context.Context, job app.Job, notBefore time.Time, cause string) error {
 	n, err := rowsAffected(s.db.ExecContext(ctx, `
 UPDATE analysis_jobs SET status = 'queued', available_unix = ?, lease_until_unix = NULL, lease_token = NULL, last_error = ?
-WHERE id = ? AND status = 'running' AND lease_token = ?`, notBefore.Unix(), cause, job.ID, job.LeaseToken))
+WHERE id = ? AND status = 'running' AND lease_token = ? AND lease_until_unix > ?`, notBefore.Unix(), cause, job.ID, job.LeaseToken, s.now().Unix()))
 	if err != nil {
 		return fmt.Errorf("schedule retry: %w", err)
 	}
@@ -139,6 +149,21 @@ UPDATE analysis_jobs SET
 WHERE id = ? AND status = 'running' AND lease_token = ?`, job.ID, job.LeaseToken))
 	if err != nil {
 		return fmt.Errorf("release analysis work: %w", err)
+	}
+	if n != 1 {
+		return app.ErrLeaseLost
+	}
+	return nil
+}
+
+// Supersede retires a claimed item whose observed head moved on Forgejo
+// before its content could be fetched; the next poll schedules the new head.
+func (s *Store) Supersede(ctx context.Context, job app.Job, reason string) error {
+	n, err := rowsAffected(s.db.ExecContext(ctx, `
+UPDATE analysis_jobs SET status = 'superseded', attempts = attempts - 1, lease_until_unix = NULL, lease_token = NULL, last_error = ?
+WHERE id = ? AND status = 'running' AND lease_token = ?`, reason, job.ID, job.LeaseToken))
+	if err != nil {
+		return fmt.Errorf("supersede analysis work: %w", err)
 	}
 	if n != 1 {
 		return app.ErrLeaseLost
@@ -175,6 +200,9 @@ JOIN subscriptions s ON s.repository = p.repository AND s.active = 1 WHERE p.pr_
 		}
 		if _, err := tx.ExecContext(ctx, `UPDATE pull_requests SET observed_identity = ? WHERE pr_key = ?`, string(identity), key); err != nil {
 			return fmt.Errorf("record replay identity: %w", err)
+		}
+		if _, err := tx.ExecContext(ctx, `UPDATE analysis_jobs SET status = 'superseded' WHERE pr_key = ? AND status = 'queued'`, key); err != nil {
+			return fmt.Errorf("supersede pending candidate: %w", err)
 		}
 		if _, err := tx.ExecContext(ctx, `
 INSERT INTO analysis_jobs(identity, pr_key, generation, head_sha, input_revision, profile_json, status, available_unix, created_unix)

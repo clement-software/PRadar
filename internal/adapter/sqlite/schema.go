@@ -67,6 +67,8 @@ CREATE TABLE IF NOT EXISTS analyses (
   created_unix    INTEGER NOT NULL
 );
 
+CREATE INDEX IF NOT EXISTS analyses_pr_key ON analyses(pr_key, id);
+
 CREATE TABLE IF NOT EXISTS pr_events (
   id      INTEGER PRIMARY KEY AUTOINCREMENT,
   pr_key  TEXT NOT NULL REFERENCES pull_requests(pr_key) ON DELETE CASCADE,
@@ -74,6 +76,8 @@ CREATE TABLE IF NOT EXISTS pr_events (
   kind    TEXT NOT NULL,
   detail  TEXT NOT NULL
 );
+
+CREATE INDEX IF NOT EXISTS pr_events_pr_key ON pr_events(pr_key, id);
 
 CREATE TABLE IF NOT EXISTS corpora (
   id            TEXT PRIMARY KEY,

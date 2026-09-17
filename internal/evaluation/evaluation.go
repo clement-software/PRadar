@@ -4,6 +4,7 @@
 package evaluation
 
 import (
+	"bytes"
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
@@ -68,6 +69,18 @@ type Manifest struct {
 	Items []Item `json:"items"`
 }
 
+// ParseManifest decodes a manifest file, rejecting unknown fields so a typo
+// cannot silently drop an item's category or reason.
+func ParseManifest(raw []byte) (Manifest, error) {
+	var manifest Manifest
+	decoder := json.NewDecoder(bytes.NewReader(raw))
+	decoder.DisallowUnknownFields()
+	if err := decoder.Decode(&manifest); err != nil {
+		return Manifest{}, fmt.Errorf("decode manifest: %w", err)
+	}
+	return manifest, nil
+}
+
 // Validate enforces the PRD breadth rules.
 func (m Manifest) Validate() error {
 	if len(m.Items) != CorpusSize {
@@ -121,11 +134,18 @@ type Answers struct {
 	ReviewNeeded bool `json:"review_needed"`
 }
 
+// Versions are the non-profile inputs whose change invalidates a scored run.
+type Versions struct {
+	Contract     string `json:"contract"`
+	Presentation string `json:"presentation"`
+}
+
 // Score is the evaluator's record for one item.
 type Score struct {
 	Identity         pullrequest.Identity `json:"identity"`
 	HeadSHA          string               `json:"head_sha"`
 	Profile          pullrequest.Profile  `json:"profile"`
+	Versions         Versions             `json:"versions"`
 	Elapsed          time.Duration        `json:"elapsed_ns"`
 	Answers          Answers              `json:"answers"`
 	Useful           bool                 `json:"useful"`
@@ -159,6 +179,7 @@ func (s Score) Validate(item Item) error {
 type Report struct {
 	CorpusID    string              `json:"corpus_id"`
 	Profile     pullrequest.Profile `json:"profile"`
+	Versions    Versions            `json:"versions"`
 	Items       []ReportItem        `json:"items"`
 	Scored      int                 `json:"scored"`
 	Passed      int                 `json:"passed"`
@@ -192,15 +213,15 @@ const (
 // BuildReport aggregates scores against the manifest under the current
 // profile. Scores recorded under another profile invalidate the aggregate:
 // the report lists them and demands a complete rerun.
-func BuildReport(manifest Manifest, scores map[string]Score, profile pullrequest.Profile, now time.Time) Report {
-	report := Report{CorpusID: manifest.ID(), Profile: profile, GeneratedAt: now.UTC()}
+func BuildReport(manifest Manifest, scores map[string]Score, profile pullrequest.Profile, versions Versions, now time.Time) Report {
+	report := Report{CorpusID: manifest.ID(), Profile: profile, Versions: versions, GeneratedAt: now.UTC()}
 	items := slices.Clone(manifest.Items)
 	slices.SortFunc(items, func(a, b Item) int { return strings.Compare(a.Ref().Key(), b.Ref().Key()) })
 	for _, item := range items {
 		key := item.Ref().Key()
 		line := ReportItem{PullRequest: key, HeadSHA: item.HeadSHA}
 		if score, ok := scores[key]; ok {
-			if score.Profile != profile || score.HeadSHA != item.HeadSHA {
+			if score.Profile != profile || score.Versions != versions || score.HeadSHA != item.HeadSHA {
 				report.Invalid = append(report.Invalid, key)
 			} else {
 				line.Scored, line.Identity, line.Elapsed, line.Duration = true, score.Identity, score.Elapsed, score.AnalysisDuration
