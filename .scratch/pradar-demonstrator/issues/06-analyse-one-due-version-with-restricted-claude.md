@@ -37,3 +37,27 @@ and publish the resulting Analyse with complete provenance.
   permission policy.
 - [x] `make verify` passes.
 
+
+## Comments
+
+2026-09-17 — Live evidence corrected two defects the fixture substitute hid.
+
+Two real captured runs (model `sonnet`, about 0.04 USD each) showed that:
+
+- the `Skill` tool exposed every skill installed for the user, not only the
+  pinned one, and the `/show-me` prompt prefix never expanded, because a
+  plugin skill is namespaced `show-me:show-me`. No analysis had used the
+  pinned guidance, although provenance recorded its version.
+- the startup event reports the surface actually granted, which nothing was
+  checking.
+
+The adapter now passes `--disable-slash-commands`, exposes `Read,Glob,Grep`
+only, appends the pinned `SKILL.md` verbatim through `--append-system-prompt`,
+and reads `--output-format stream-json` to verify the init event (tools,
+skills, slash commands, plugins, MCP servers, permission mode) and to record
+the tools actually called plus the permission-denial count as provenance.
+`PromptVersion` moves to `pradar-prompt-v2`, so earlier analyses keep a
+distinct identity.
+
+Verified live on `merlin/docs#188`: init accepted, tools used `Read` and
+`StructuredOutput`, no denial, 30 s, 0.087 USD, Mermaid body without HTML.

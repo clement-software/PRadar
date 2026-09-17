@@ -194,18 +194,14 @@ func runSmoke(args []string) error {
 		return err
 	}
 	defer os.RemoveAll(scratch)
-	pluginDir, err := claudecli.InstallPlugin(scratch)
-	if err != nil {
-		return err
-	}
 	root, err := workspace.New(filepath.Join(scratch, "workspaces"), 8<<20)
 	if err != nil {
 		return err
 	}
 	smoke := &app.Smoke{
 		Forge: forge, Workspace: root, Now: time.Now, Log: log,
-		Analyzer: &claudecli.Analyzer{Executable: claudePath, PluginDir: pluginDir, Model: *model, Timeout: *timeout,
-			MaxOutput: 4 << 20, MaxTurns: *maxTurns, MaxBudgetUSD: *maxBudget, Env: claudecli.MinimalEnv()},
+		Analyzer: &claudecli.Analyzer{Executable: claudePath, Model: *model, Timeout: *timeout,
+			MaxOutput: 16 << 20, MaxTurns: *maxTurns, MaxBudgetUSD: *maxBudget, Env: claudecli.MinimalEnv()},
 		Profile: pullrequest.Profile{PromptVersion: claudecli.PromptVersion, SkillVersion: claudecli.SkillVersion, Engine: claudecli.Engine, Model: *model},
 		Render:  func(markdown string) string { return string(ui.RenderMarkdown(markdown)) },
 	}
@@ -332,12 +328,8 @@ func runDemonstrator(args []string) error {
 		if err != nil {
 			return fmt.Errorf("claude CLI not found: %w", err)
 		}
-		pluginDir, err := claudecli.InstallPlugin(filepath.Join(cfg.dataDir, "plugins"))
-		if err != nil {
-			return err
-		}
-		analyzer = &claudecli.Analyzer{Executable: claudePath, PluginDir: pluginDir, Model: cfg.model, Timeout: cfg.analysisTime,
-			MaxOutput: 4 << 20, MaxTurns: cfg.maxTurns, MaxBudgetUSD: cfg.maxBudgetUSD, Env: claudecli.MinimalEnv()}
+		analyzer = &claudecli.Analyzer{Executable: claudePath, Model: cfg.model, Timeout: cfg.analysisTime,
+			MaxOutput: 16 << 20, MaxTurns: cfg.maxTurns, MaxBudgetUSD: cfg.maxBudgetUSD, Env: claudecli.MinimalEnv()}
 		profile = pullrequest.Profile{PromptVersion: claudecli.PromptVersion, SkillVersion: claudecli.SkillVersion, Engine: claudecli.Engine, Model: cfg.model}
 	}
 
