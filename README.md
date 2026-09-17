@@ -51,7 +51,9 @@ printf '%s' "$TOKEN" | go run ./cmd/pradar token set --instance https://forge.ex
 go run ./cmd/pradar run --instance https://forge.example --model <modèle Claude>
 ```
 
-# corpus d'évaluation : vingt pull requests figées (voir internal/evaluation pour le format)
+# corpus d'évaluation : brouillon depuis les PR récentes, puis vingt PR figées
+go run ./cmd/pradar corpus candidates --instance https://forge.example owner/repo-a owner/repo-b > manifest.json
+#   garder 20 éléments (2 ou 3 dépôts), remplir "category" (code|ci|infra) et "reason", vérifier "size" et "authorship"
 go run ./cmd/pradar corpus freeze manifest.json
 
 Le visualiseur n'écoute que sur 127.0.0.1 ; son URL est imprimée au démarrage.

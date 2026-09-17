@@ -251,3 +251,33 @@ func TestLogs_RedactForgejoToken(t *testing.T) {
 		t.Fatalf("error message must not echo the credential: %v", err)
 	}
 }
+
+func TestClient_ListRecentPullRequestsForCorpusSelection(t *testing.T) {
+	t.Parallel()
+	f := newFakeForgejo(t)
+	now := time.Date(2026, 9, 17, 12, 0, 0, 0, time.UTC)
+	var all []map[string]any
+	for i := range int64(7) {
+		item := pr(i+1, "open", now.Add(-time.Duration(i)*time.Hour))
+		item["additions"], item["deletions"], item["changed_files"] = 100*int(i), 5, 3
+		if i%2 == 1 {
+			item["state"], item["merged"] = "closed", true
+		}
+		all = append(all, item)
+	}
+	f.mux.HandleFunc("GET /api/v1/repos/acme/widgets/pulls", func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Query().Get("state") != "all" {
+			t.Errorf("corpus candidates must include closed and merged pull requests: %s", r.URL.RawQuery)
+		}
+		page, _ := strconv.Atoi(r.URL.Query().Get("page"))
+		start := min((page-1)*2, len(all))
+		writeJSON(w, all[start:min(start+2, len(all))])
+	})
+	candidates, err := f.client().ListRecentPullRequests(t.Context(), "acme/widgets", 5)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(candidates) != 5 || candidates[1].State != pullrequest.StateMerged || candidates[3].ChangedLines != 305 || candidates[0].ChangedFiles != 3 {
+		t.Fatalf("candidates = %+v", candidates)
+	}
+}

@@ -64,6 +64,27 @@ func (i Item) Ref() pullrequest.Ref {
 	return pullrequest.Ref{Repository: i.Repository, Number: i.Number}
 }
 
+// LargeChangeLines is the heuristic boundary between a small and a large change.
+const LargeChangeLines = 200
+
+// DraftItem proposes a manifest item from Forgejo metadata: size from the
+// changed line count and authorship from bot-like logins. The category and
+// the inclusion reason are the evaluator's judgement and stay empty.
+func DraftItem(ref pullrequest.Ref, headSHA, author string, changedLines int) Item {
+	item := Item{Repository: ref.Repository, Number: ref.Number, HeadSHA: headSHA, Size: SizeSmall, Authorship: AuthorHuman}
+	if changedLines >= LargeChangeLines {
+		item.Size = SizeLarge
+	}
+	lowered := strings.ToLower(author)
+	for _, marker := range []string{"[bot]", "-bot", "bot-", "agent", "renovate", "dependabot", "claude", "codex", "copilot"} {
+		if strings.Contains(lowered, marker) {
+			item.Authorship = AuthorAgent
+			break
+		}
+	}
+	return item
+}
+
 // Manifest is the immutable corpus definition.
 type Manifest struct {
 	Items []Item `json:"items"`

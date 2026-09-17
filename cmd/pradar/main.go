@@ -5,6 +5,7 @@ package main
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"flag"
 	"fmt"
@@ -54,10 +55,13 @@ func run(args []string) error {
 	}
 }
 
-// runCorpus validates a manifest file and freezes it as the current corpus.
+// runCorpus prepares (candidates) or freezes (freeze) the evaluation corpus.
 func runCorpus(args []string) error {
+	if len(args) >= 1 && args[0] == "candidates" {
+		return runCorpusCandidates(args[1:])
+	}
 	if len(args) < 2 || args[0] != "freeze" {
-		return errors.New("usage: pradar corpus freeze <manifest.json> [--data <dir>]")
+		return errors.New("usage: pradar corpus candidates --instance <url> <owner/name>... | pradar corpus freeze <manifest.json> [--data <dir>]")
 	}
 	fs := flag.NewFlagSet("corpus freeze", flag.ContinueOnError)
 	dataDir := fs.String("data", defaultDataDir(), "directory holding the SQLite database")
@@ -89,6 +93,48 @@ func runCorpus(args []string) error {
 	}
 	fmt.Fprintln(os.Stderr, "corpus frozen with id", id)
 	return nil
+}
+
+// runCorpusCandidates prints a draft manifest of the most recent pull requests
+// of the given repositories; the evaluator trims it to twenty items and fills
+// the category and reason before freezing it.
+func runCorpusCandidates(args []string) error {
+	fs := flag.NewFlagSet("corpus candidates", flag.ContinueOnError)
+	raw := fs.String("instance", os.Getenv("PRADAR_FORGEJO_INSTANCE"), "Forgejo instance URL (https)")
+	limit := fs.Int("limit", 15, "pull requests listed per repository, most recently updated first")
+	if err := fs.Parse(args); err != nil {
+		return err
+	}
+	if fs.NArg() == 0 {
+		return errors.New("usage: pradar corpus candidates --instance <url> <owner/name> [<owner/name>]")
+	}
+	instance, err := forgejo.ParseInstance(*raw, false)
+	if err != nil {
+		return fmt.Errorf("--instance: %w", err)
+	}
+	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt)
+	defer stop()
+	token, err := (keychain.Store{}).Lookup(ctx, instance.Host())
+	if err != nil {
+		return err
+	}
+	client := forgejo.NewClient(instance, token)
+	var manifest evaluation.Manifest
+	for _, repository := range fs.Args() {
+		candidates, err := client.ListRecentPullRequests(ctx, repository, *limit)
+		if err != nil {
+			return fmt.Errorf("%s: %w", repository, err)
+		}
+		for _, candidate := range candidates {
+			item := evaluation.DraftItem(candidate.Ref, candidate.HeadSHA, candidate.Author, candidate.ChangedLines)
+			item.Reason = fmt.Sprintf("TODO — %s · %s · %s · %d lines in %d files · %s",
+				candidate.Title, candidate.Author, candidate.State, candidate.ChangedLines, candidate.ChangedFiles, candidate.HTMLURL)
+			manifest.Items = append(manifest.Items, item)
+		}
+	}
+	encoder := json.NewEncoder(os.Stdout)
+	encoder.SetIndent("", "  ")
+	return encoder.Encode(manifest)
 }
 
 func defaultDataDir() string {
