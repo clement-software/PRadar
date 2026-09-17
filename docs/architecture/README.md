@@ -42,6 +42,13 @@ than silently changing this overview.
 - [ADR-0005](../adr/0005-isolate-untrusted-pull-request-content.md): isolate
   untrusted pull-request content and keep credentials outside analysis.
 
+## Proposed decisions
+
+- [ADR-0006](../adr/0006-deliver-the-pinned-skill-as-a-system-prompt.md):
+  deliver the pinned skill as system-prompt content and verify the granted
+  engine surface at runtime. It supersedes the delivery mechanism of ADR-0005
+  and awaits the maintainer's arbitration.
+
 ## Prototype evidence
 
 - `codex/prototype/pradar-state-machine` at `471a8d2` validated lifecycle and

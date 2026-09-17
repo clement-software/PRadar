@@ -75,3 +75,25 @@ next production phase.
   infrastructure pull requests.
 - Not yet proven: that the `show-me` skill itself was invoked (session
   persistence is disabled, so the tool trace is not kept).
+
+2026-09-18 — The PRD's end-to-end scenario ran live on `merlin/docs`.
+
+`pradar run --instance https://git.mbvsi.fr --model sonnet --debounce 0` with
+the abonnement created from the repository URL through the visualizer:
+
+- Launch reconciliation imported the open pull requests and scheduled both.
+- The single worker claimed and completed each one in turn (about 30 s each,
+  roughly 0.09 USD each); no retry, no unavailable card.
+- The timeline showed one carte per pull request with intention, importance
+  and risks; the detail showed the Forgejo link, two Mermaid diagrams, the
+  change-since-previous section and provenance naming the model, the pinned
+  skill revision and the duration.
+- Marking the carte read removed it from the unread filter; archiving removed
+  it from the timeline and the detail reported it archived.
+- A restart against the same database restored one visible carte and the
+  archived state, scheduled no work and spent nothing. The workspace
+  directory was empty after every analysis.
+
+Still not exercised live: réapparition after a new commit, which needs a push
+to the repository, and the three-failure unavailable path. Both are covered by
+the automated tests.
