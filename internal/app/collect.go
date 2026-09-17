@@ -43,6 +43,8 @@ type Collector struct {
 	Log      *slog.Logger
 	// Interrupt cancels the analysis currently running for a repository; nil when no worker runs.
 	Interrupt func(repository string)
+	// Tick supplies polling ticks; nil means time.Tick.
+	Tick func(interval time.Duration) <-chan time.Time
 }
 
 // SubscribeRequest creates or reactivates an abonnement.
@@ -195,11 +197,16 @@ func (c *Collector) block(ctx context.Context, repository string, cause error) e
 	return c.Store.RecordSync(ctx, repository, time.Time{}, cause.Error())
 }
 
-// Poll reconciles now and then every interval until ctx ends. Every tick is a
-// complete reconciliation, so a wake after sleep needs no special handling.
+// Poll reconciles immediately (launch) and then on every tick until ctx ends.
+// Every tick is a complete reconciliation, so a wake after sleep needs no
+// special handling: the first tick after waking catches up. Tick is
+// time.Tick in production and a test-controlled channel otherwise.
 func (c *Collector) Poll(ctx context.Context, interval time.Duration) {
-	ticker := time.NewTicker(interval)
-	defer ticker.Stop()
+	tick := c.Tick
+	if tick == nil {
+		tick = time.Tick
+	}
+	ticks := tick(interval)
 	for {
 		if err := c.ReconcileAll(ctx); err != nil && ctx.Err() == nil {
 			c.Log.Error("reconciliation failed", "error", err.Error())
@@ -207,7 +214,7 @@ func (c *Collector) Poll(ctx context.Context, interval time.Duration) {
 		select {
 		case <-ctx.Done():
 			return
-		case <-ticker.C:
+		case <-ticks:
 		}
 	}
 }

@@ -533,3 +533,65 @@ func TestTimeline_Filters(t *testing.T) {
 		t.Fatal("archived carte must be hidden")
 	}
 }
+
+func TestPoll_ReconcilesOnLaunchAndEveryTick(t *testing.T) {
+	t.Parallel()
+	f := newFixture(t)
+	f.subscribe(app.ImportNone)
+	ticks := make(chan time.Time)
+	f.collector.Tick = func(time.Duration) <-chan time.Time { return ticks }
+	ctx, cancel := context.WithCancel(f.ctx)
+	done := make(chan struct{})
+	go func() { defer close(done); f.collector.Poll(ctx, 5*time.Minute) }()
+	waitFor(t, func() bool { return !f.status().LastSyncAt.IsZero() }) // launch reconciliation
+	f.forge.set(observation(42, "sha-2", f.clock.Now().Add(time.Minute)))
+	f.clock.Advance(5 * time.Minute)
+	ticks <- f.clock.Now()
+	waitFor(t, func() bool { return f.status().Pending == 1 })
+	cancel()
+	<-done
+}
+
+func TestReconcile_TitleBodyAndHeadChangesScheduleDistinctRevisions(t *testing.T) {
+	t.Parallel()
+	f := newFixture(t)
+	f.subscribe(app.ImportTen)
+	f.drain()
+	base := observation(42, "sha-1", f.clock.Now())
+	changes := []func(o *pullrequest.Observation){
+		func(o *pullrequest.Observation) { o.Title = "Retitled" },
+		func(o *pullrequest.Observation) { o.Body = "rewritten description" },
+		func(o *pullrequest.Observation) { o.HeadSHA = "sha-2" },
+	}
+	for i, change := range changes {
+		f.clock.Advance(time.Minute)
+		next := base
+		next.UpdatedAt = f.clock.Now()
+		change(&next)
+		f.forge.set(next)
+		if err := f.collector.ReconcileAll(f.ctx); err != nil {
+			t.Fatal(err)
+		}
+		if s := f.status(); s.Pending != 1 {
+			t.Fatalf("change %d: pending = %d, want a fresh candidate", i, s.Pending)
+		}
+		f.drain()
+		if s := f.status(); s.Pending != 0 {
+			t.Fatalf("change %d: pending after analysis = %d", i, s.Pending)
+		}
+		base = next
+	}
+	detail, _ := f.timeline.Detail(f.ctx, ref)
+	if len(detail.History) != 4 {
+		t.Fatalf("history = %d analyses, want 4 distinct revisions", len(detail.History))
+	}
+	// An older observation replayed by a stale poll never regresses state.
+	stale := observation(42, "sha-1", f.clock.Now().Add(-time.Hour))
+	f.forge.set(stale)
+	if err := f.collector.ReconcileAll(f.ctx); err != nil {
+		t.Fatal(err)
+	}
+	if cards := f.cards(app.Filter{}); cards[0].Analysis.HeadSHA != "sha-2" || f.status().Pending != 0 {
+		t.Fatalf("stale observation changed durable state: %+v", cards)
+	}
+}
