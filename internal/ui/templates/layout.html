@@ -11,7 +11,8 @@
 <a class="skip" href="#main">Aller au contenu</a>
 <header class="top">
   <a class="brand" href="/" aria-label="PRadar, timeline">PRadar</a>
-  <nav aria-label="Vue">{{template "status" .Status}}</nav>
+  <nav aria-label="Vue"><a href="/">Timeline</a> · <a href="/evaluation">Évaluation</a></nav>
+  {{template "status" .Status}}
 </header>
 {{if .Notice}}<p class="notice" role="status">{{.Notice}}</p>{{end}}
 {{if .Problem}}<p class="problem" role="alert">{{.Problem}}</p>{{end}}

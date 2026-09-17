@@ -5,6 +5,7 @@ package main
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"flag"
 	"fmt"
@@ -26,6 +27,7 @@ import (
 	"github.com/clement-software/PRadar/internal/adapter/workspace"
 	"github.com/clement-software/PRadar/internal/app"
 	"github.com/clement-software/PRadar/internal/controlled"
+	"github.com/clement-software/PRadar/internal/evaluation"
 	"github.com/clement-software/PRadar/internal/pullrequest"
 	"github.com/clement-software/PRadar/internal/ui"
 )
@@ -46,9 +48,53 @@ func run(args []string) error {
 		return runDemonstrator(args[1:])
 	case "token":
 		return runToken(args[1:])
+	case "corpus":
+		return runCorpus(args[1:])
 	default:
 		return fmt.Errorf("unknown command %q", args[0])
 	}
+}
+
+// runCorpus validates a manifest file and freezes it as the current corpus.
+func runCorpus(args []string) error {
+	if len(args) < 2 || args[0] != "freeze" {
+		return errors.New("usage: pradar corpus freeze <manifest.json> [--data <dir>]")
+	}
+	fs := flag.NewFlagSet("corpus freeze", flag.ContinueOnError)
+	dataDir := fs.String("data", defaultDataDir(), "directory holding the SQLite database")
+	if err := fs.Parse(args[2:]); err != nil {
+		return err
+	}
+	raw, err := os.ReadFile(args[1]) //nolint:gosec // the user names their own manifest file on the command line
+	if err != nil {
+		return fmt.Errorf("read manifest: %w", err)
+	}
+	var manifest evaluation.Manifest
+	if err := json.Unmarshal(raw, &manifest); err != nil {
+		return fmt.Errorf("decode manifest: %w", err)
+	}
+	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt)
+	defer stop()
+	if err := os.MkdirAll(*dataDir, 0o700); err != nil {
+		return fmt.Errorf("create data directory: %w", err)
+	}
+	store, err := sqlite.Open(ctx, filepath.Join(*dataDir, "pradar.sqlite"), time.Now)
+	if err != nil {
+		return err
+	}
+	defer store.Close()
+	evaluator := &app.Evaluator{Store: store, Read: store, Now: time.Now}
+	id, err := evaluator.Freeze(ctx, manifest)
+	if err != nil {
+		return err
+	}
+	fmt.Fprintln(os.Stderr, "corpus frozen with id", id)
+	return nil
+}
+
+func defaultDataDir() string {
+	home, _ := os.UserHomeDir()
+	return filepath.Join(home, "Library", "Application Support", "PRadar-demonstrator")
 }
 
 // runToken reads a read-only Forgejo token from standard input and stores it
@@ -95,10 +141,9 @@ type config struct {
 }
 
 func runDemonstrator(args []string) error {
-	home, _ := os.UserHomeDir()
 	var cfg config
 	fs := flag.NewFlagSet("run", flag.ContinueOnError)
-	fs.StringVar(&cfg.dataDir, "data", filepath.Join(home, "Library", "Application Support", "PRadar-demonstrator"), "directory holding the SQLite database and temporary workspaces")
+	fs.StringVar(&cfg.dataDir, "data", defaultDataDir(), "directory holding the SQLite database and temporary workspaces")
 	fs.StringVar(&cfg.listen, "listen", "127.0.0.1:0", "loopback address of the visualizer")
 	fs.BoolVar(&cfg.controlled, "controlled", false, "use the controlled Forgejo and analyzer substitutes")
 	fs.DurationVar(&cfg.pollInterval, "poll", 5*time.Minute, "Forgejo polling interval")
@@ -178,13 +223,14 @@ func runDemonstrator(args []string) error {
 		Backoff: app.ExponentialBackoff(time.Minute), Log: log}
 	collector.Interrupt = worker.Interrupt
 	timeline := &app.Timeline{Store: store, Profile: profile, Now: now}
+	evaluator := &app.Evaluator{Store: store, Read: store, Profile: profile, Now: now}
 	if cfg.controlled {
 		if _, err := collector.Subscribe(ctx, app.SubscribeRequest{Repository: controlled.Repository, HTMLURL: "https://forge.example/" + controlled.Repository, Import: app.ImportTen}); err != nil {
 			return err
 		}
 	}
 
-	server := &ui.Server{Timeline: timeline, Collector: collector, Log: log, ParseRepositoryURL: instance.ParseRepositoryURL}
+	server := &ui.Server{Timeline: timeline, Collector: collector, Evaluator: evaluator, Log: log, ParseRepositoryURL: instance.ParseRepositoryURL}
 	var wg sync.WaitGroup
 	wg.Go(func() { collector.Poll(ctx, cfg.pollInterval) })
 	wg.Go(func() { worker.Run(ctx, 2*time.Second) })

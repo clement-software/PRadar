@@ -51,6 +51,9 @@ printf '%s' "$TOKEN" | go run ./cmd/pradar token set --instance https://forge.ex
 go run ./cmd/pradar run --instance https://forge.example --model <modèle Claude>
 ```
 
+# corpus d'évaluation : vingt pull requests figées (voir internal/evaluation pour le format)
+go run ./cmd/pradar corpus freeze manifest.json
+
 Le visualiseur n'écoute que sur 127.0.0.1 ; son URL est imprimée au démarrage.
 Les abonnements s'ajoutent depuis la timeline en collant l'URL Forgejo du dépôt.
 

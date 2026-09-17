@@ -6,6 +6,7 @@ package ui
 import (
 	"context"
 	"embed"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"html/template"
@@ -19,6 +20,7 @@ import (
 	"time"
 
 	"github.com/clement-software/PRadar/internal/app"
+	"github.com/clement-software/PRadar/internal/evaluation"
 	"github.com/clement-software/PRadar/internal/pullrequest"
 )
 
@@ -29,6 +31,7 @@ var content embed.FS
 type Server struct {
 	Timeline  *app.Timeline
 	Collector *app.Collector
+	Evaluator *app.Evaluator
 	Log       *slog.Logger
 	// ParseRepositoryURL maps a Forgejo repository URL to "owner/name" and its canonical URL.
 	ParseRepositoryURL func(raw string) (repository, htmlURL string, err error)
@@ -44,6 +47,7 @@ func (s *Server) handler() http.Handler {
 		"join":     strings.Join,
 		"prPath":   prPath,
 		"safeURL":  safeURL,
+		"prLink":   func(key string) string { return "/pr/" + strings.ReplaceAll(key, "#", "%23") },
 	}).ParseFS(content, "templates/*.html"))
 	assets, _ := fs.Sub(content, "assets")
 
@@ -54,6 +58,9 @@ func (s *Server) handler() http.Handler {
 	mux.HandleFunc("POST /pr/{repository...}", s.action)
 	mux.HandleFunc("POST /subscriptions", s.subscribe)
 	mux.HandleFunc("POST /subscriptions/{repository...}", s.subscriptionAction)
+	mux.HandleFunc("GET /evaluation", s.evaluation)
+	mux.HandleFunc("GET /evaluation/report.json", s.evaluationReport)
+	mux.HandleFunc("POST /evaluation/score/{repository...}", s.score)
 	return securityHeaders(mux)
 }
 
@@ -111,6 +118,9 @@ type page struct {
 	Importances []string
 	Ref         pullrequest.Ref
 	Replayed    bool
+	Progress    app.Progress
+	CorpusItem  *evaluation.Item
+	Score       *evaluation.Score
 }
 
 func (s *Server) render(w http.ResponseWriter, name string, data page) {
@@ -206,8 +216,69 @@ func (s *Server) detail(w http.ResponseWriter, r *http.Request) {
 		s.fail(w, err)
 		return
 	}
-	s.render(w, "detail.html", page{Title: detail.Card.Title, Detail: detail, Status: status, Ref: ref,
-		Notice: r.URL.Query().Get("notice"), Problem: r.URL.Query().Get("problem")})
+	data := page{Title: detail.Card.Title, Detail: detail, Status: status, Ref: ref,
+		Notice: r.URL.Query().Get("notice"), Problem: r.URL.Query().Get("problem")}
+	if s.Evaluator != nil {
+		if item, ok := s.Evaluator.Item(r.Context(), ref); ok {
+			data.CorpusItem = &item
+			if progress, err := s.Evaluator.Report(r.Context()); err == nil {
+				if score, ok := progress.Scores[ref.Key()]; ok {
+					data.Score = &score
+				}
+			}
+		}
+	}
+	s.render(w, "detail.html", data)
+}
+
+func (s *Server) evaluation(w http.ResponseWriter, r *http.Request) {
+	status, err := s.Timeline.Status(r.Context())
+	if err != nil {
+		s.fail(w, err)
+		return
+	}
+	data := page{Title: "Évaluation", Status: status, Notice: r.URL.Query().Get("notice"), Problem: r.URL.Query().Get("problem")}
+	progress, err := s.Evaluator.Report(r.Context())
+	switch {
+	case errors.Is(err, app.ErrNoCorpus):
+		data.Problem = "Aucun corpus figé : lancez `pradar corpus freeze <manifest.json>`."
+	case err != nil:
+		s.fail(w, err)
+		return
+	default:
+		data.Progress = progress
+	}
+	s.render(w, "evaluation.html", data)
+}
+
+func (s *Server) evaluationReport(w http.ResponseWriter, r *http.Request) {
+	progress, err := s.Evaluator.Report(r.Context())
+	if err != nil {
+		s.fail(w, err)
+		return
+	}
+	w.Header().Set("Content-Type", "application/json")
+	encoder := json.NewEncoder(w)
+	encoder.SetIndent("", "  ")
+	_ = encoder.Encode(progress.Report)
+}
+
+func (s *Server) score(w http.ResponseWriter, r *http.Request) {
+	ref, err := refFromPath(r)
+	if err != nil {
+		http.NotFound(w, r)
+		return
+	}
+	elapsedMS, _ := strconv.ParseInt(r.FormValue("elapsed_ms"), 10, 64)
+	card := app.Scorecard{
+		Elapsed: time.Duration(elapsedMS) * time.Millisecond,
+		Answers: evaluation.Answers{
+			Intent: r.FormValue("intent") == "on", Structure: r.FormValue("structure") == "on",
+			Risks: r.FormValue("risks") == "on", ReviewNeeded: r.FormValue("review_needed") == "on",
+		},
+		Useful: r.FormValue("useful") == "on", CriticalError: r.FormValue("critical_error") == "on", Notes: r.FormValue("notes"),
+	}
+	redirect(w, r, prPath(ref), "Évaluation enregistrée", s.Evaluator.Score(r.Context(), ref, card))
 }
 
 func (s *Server) action(w http.ResponseWriter, r *http.Request) {

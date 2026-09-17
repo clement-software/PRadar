@@ -21,13 +21,15 @@ CLI analyzer.
 | Package | Owns | Depends on |
 | --- | --- | --- |
 | `internal/pullrequest` | Identity, input revision, analysis identity, `pradar.analysis.v1`, the pure `Reconcile` lifecycle decision | standard library only |
-| `internal/app` | Abonnements and reconciliation (`Collector`), the single leased worker (`Worker`), reading use cases (`Timeline`); declares the `Forge`, `CollectionStore`, `WorkStore`, `Workspace`, `Analyzer` and `ReadModel` interfaces it consumes | `internal/pullrequest` |
+| `internal/evaluation` | Corpus manifest validation and content id, per-item score, deterministic threshold report (16/20 useful under one minute, zero critical error; a changed profile or head invalidates earlier scores) | `internal/pullrequest` |
+| `internal/app` | Abonnements and reconciliation (`Collector`), the single leased worker (`Worker`), reading use cases (`Timeline`), corpus freezing and scoring (`Evaluator`); declares the `Forge`, `CollectionStore`, `WorkStore`, `Workspace`, `Analyzer` and `ReadModel` interfaces it consumes | `internal/pullrequest` |
 | `internal/adapter/sqlite` | Schema, observation+scheduling transaction, atomic leased claim, completion with latest-only publication, read model, user state | `database/sql`, `modernc.org/sqlite`, `internal/app` |
 | `internal/adapter/claudecli` | Restricted `claude -p` invocation (`--restricted`, read-only tools, `dontAsk`, no session persistence, bounded turns/budget/timeout/output), embedded pinned HumanLayer `show-me` plugin (`showme/PIN`), envelope and `pradar.analysis.v1` decoding | `os/exec`, `internal/app` |
 | `internal/adapter/workspace` | Owned temporary root, safe materialisation, cleanup and startup scavenging | `os` |
 | `internal/adapter/forgejo` | Instance and repository URL validation, read-only bounded HTTP client (auth header, same-origin redirects only, transient retries, pagination, payload mapping, diff bound), self-redacting `Token` | `net/http`, `internal/pullrequest` |
 | `internal/adapter/keychain` | Token lookup and storage through `/usr/bin/security`; the token never enters SQLite, logs or exports | `os/exec`, `internal/adapter/forgejo` |
-| `internal/controlled` | Deterministic Forgejo and analyzer substitutes for `--controlled` | `internal/app` |
+| `internal/controlled` | Deterministic Forgejo and analyzer substitutes for `--controlled` | `internal/evaluation` | Corpus manifest validation and content id, per-item score, deterministic threshold report (16/20 useful under one minute, zero critical error; a changed profile or head invalidates earlier scores) | `internal/pullrequest` |
+| `internal/app` |
 | `internal/ui` | Loopback HTTP visualizer, safe Markdown rendering, embedded assets | `net/http`, `html/template`, `goldmark`, `internal/app` |
 
 `internal/architecture_test.go` rejects outward imports from the policy
@@ -47,7 +49,9 @@ substitutes at the interfaces above.
    publishes the carte only when the identity still matches the latest
    observed identity of an active abonnement generation.
 3. The visualizer reads cartes, details, status and posts read, archive,
-   replay and abonnement actions to the use cases.
+   replay and abonnement actions to the use cases. `/evaluation` shows the
+   frozen corpus, the scorecard timer lives on each corpus item's detail and
+   `/evaluation/report.json` exports the deterministic report.
 
 ## Friction and hot spots
 

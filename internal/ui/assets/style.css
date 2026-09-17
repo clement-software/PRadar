@@ -43,3 +43,6 @@ pre.mermaid { background: var(--card); }
 .subscriptions li { display: flex; flex-wrap: wrap; gap: .5rem; align-items: center; margin-bottom: .5rem; }
 .subscribe { display: grid; gap: .5rem; max-width: 32rem; }
 .empty { color: var(--muted); }
+.scorecard form { display: grid; gap: .5rem; max-width: 40rem; }
+.verdict-pass { color: var(--ok); } .verdict-fail { color: var(--danger); }
+table { border-collapse: collapse; width: 100%; } th, td { text-align: left; padding: .35rem .5rem; border-bottom: 1px solid var(--line); }

@@ -15,6 +15,7 @@ import (
 	"github.com/clement-software/PRadar/internal/adapter/sqlite"
 	"github.com/clement-software/PRadar/internal/app"
 	"github.com/clement-software/PRadar/internal/controlled"
+	"github.com/clement-software/PRadar/internal/evaluation"
 	"github.com/clement-software/PRadar/internal/pullrequest"
 	"github.com/clement-software/PRadar/internal/ui"
 )
@@ -22,12 +23,13 @@ import (
 var profile = pullrequest.Profile{PromptVersion: "p1", SkillVersion: "s1", Engine: "controlled", Model: "m"}
 
 type visualizer struct {
-	t      *testing.T
-	client *http.Client
-	base   string
-	store  *sqlite.Store
-	worker *app.Worker
-	coll   *app.Collector
+	t         *testing.T
+	client    *http.Client
+	base      string
+	store     *sqlite.Store
+	worker    *app.Worker
+	coll      *app.Collector
+	evaluator *app.Evaluator
 }
 
 func start(t *testing.T) *visualizer {
@@ -43,7 +45,8 @@ func start(t *testing.T) *visualizer {
 	coll := &app.Collector{Forge: forge, Store: store, Profile: profile, Now: time.Now, Log: log}
 	worker := &app.Worker{Store: store, Analyzer: controlled.Analyzer{}, Workspace: noWorkspace{}, Diffs: forge, Now: time.Now,
 		Lease: time.Minute, Backoff: app.ExponentialBackoff(time.Minute), Log: log}
-	server := &ui.Server{Timeline: &app.Timeline{Store: store, Profile: profile, Now: time.Now}, Collector: coll, Log: log,
+	evaluator := &app.Evaluator{Store: store, Read: store, Profile: profile, Now: time.Now}
+	server := &ui.Server{Timeline: &app.Timeline{Store: store, Profile: profile, Now: time.Now}, Collector: coll, Evaluator: evaluator, Log: log,
 		ParseRepositoryURL: func(raw string) (string, string, error) { return controlled.Repository, raw, nil }}
 	ctx, cancel := context.WithCancel(ctx)
 	t.Cleanup(cancel)
@@ -51,7 +54,7 @@ func start(t *testing.T) *visualizer {
 	go func() { _ = server.Serve(ctx, "", func(url string) { ready <- url }) }()
 	base := <-ready
 	client := &http.Client{CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }}
-	return &visualizer{t: t, client: client, base: strings.TrimSuffix(base, "/"), store: store, worker: worker, coll: coll}
+	return &visualizer{t: t, client: client, base: strings.TrimSuffix(base, "/"), store: store, worker: worker, coll: coll, evaluator: evaluator}
 }
 
 type noWorkspace struct{}
@@ -256,4 +259,54 @@ func contrast(fg, bg string) float64 {
 		l1, l2 = l2, l1
 	}
 	return (l1 + 0.05) / (l2 + 0.05)
+}
+
+func TestVisualizer_EvaluationScorecardAndReport(t *testing.T) {
+	t.Parallel()
+	v := start(t)
+	if status, body := v.get("/evaluation"); status != http.StatusOK || !strings.Contains(body, "Aucun corpus") {
+		t.Fatalf("evaluation without corpus: %d %s", status, body)
+	}
+	if _, err := v.coll.Subscribe(t.Context(), app.SubscribeRequest{Repository: controlled.Repository, HTMLURL: "https://forge.example/controlled/demo"}); err != nil {
+		t.Fatal(err)
+	}
+	if err := v.worker.RunOne(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+	head := controlled.Forge{Now: time.Now}
+	fixture, _ := head.FetchPullRequest(t.Context(), pullrequest.Ref{Repository: controlled.Repository, Number: 1})
+	var manifest evaluation.Manifest
+	for i := range evaluation.CorpusSize {
+		item := evaluation.Item{Repository: controlled.Repository, Number: int64(i + 1), HeadSHA: fixture.HeadSHA, Size: evaluation.SizeSmall,
+			Authorship: evaluation.AuthorHuman, Category: evaluation.CategoryCode, Reason: "fixture"}
+		if i%2 == 1 {
+			item.Repository, item.Size, item.Authorship = "controlled/other", evaluation.SizeLarge, evaluation.AuthorAgent
+		}
+		item.Category = []evaluation.Category{evaluation.CategoryCode, evaluation.CategoryCI, evaluation.CategoryInfra}[i%3]
+		manifest.Items = append(manifest.Items, item)
+	}
+	if _, err := v.evaluator.Freeze(t.Context(), manifest); err != nil {
+		t.Fatal(err)
+	}
+	_, detail := v.get("/pr/controlled/demo%231")
+	for _, want := range []string{"Démarrer le minuteur", `name="elapsed_ms"`, `name="critical_error"`, `name="useful"`, `name="review_needed"`} {
+		if !strings.Contains(detail, want) {
+			t.Errorf("scorecard lacks %q", want)
+		}
+	}
+	form := url.Values{"elapsed_ms": {"42000"}, "intent": {"on"}, "structure": {"on"}, "risks": {"on"}, "review_needed": {"on"}, "useful": {"on"}}
+	if status := v.post("/evaluation/score/controlled/demo%231", form); status != http.StatusSeeOther {
+		t.Fatalf("score status %d", status)
+	}
+	if _, detail := v.get("/pr/controlled/demo%231"); !strings.Contains(detail, "Score enregistré") || !strings.Contains(detail, "42s, réussi") {
+		t.Fatalf("detail after scoring lacks the recorded score:\n%s", detail)
+	}
+	status, body := v.get("/evaluation")
+	if status != http.StatusOK || !strings.Contains(body, "Verdict : incomplete") || !strings.Contains(body, "1 réussies") || !strings.Contains(body, `href="/pr/controlled/demo%231"`) {
+		t.Fatalf("evaluation page: %d\n%s", status, body)
+	}
+	_, report := v.get("/evaluation/report.json")
+	if !strings.Contains(report, `"verdict": "incomplete"`) || !strings.Contains(report, `"scored": 1`) || strings.Contains(report, "Transient 429") {
+		t.Fatalf("report export: %s", report)
+	}
 }
