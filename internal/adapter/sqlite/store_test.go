@@ -496,3 +496,35 @@ func TestPersistenceSchema_HasNoCredentialColumn(t *testing.T) {
 		t.Fatal(err)
 	}
 }
+
+func TestObserve_ConcurrentSchedulingCreatesOneWorkItem(t *testing.T) {
+	t.Parallel()
+	h := open(t)
+	var wg sync.WaitGroup
+	for range 8 {
+		wg.Go(func() {
+			if _, err := h.store.ObservePullRequest(h.ctx, app.ObservationRequest{
+				Observation: pullrequest.Observation{Ref: ref, Title: "Title", Body: "Body", State: pullrequest.StateOpen, HeadSHA: "sha-1", UpdatedAt: h.clock.Now()},
+				Profile:     profile, Schedule: true, NotBefore: h.clock.Now().Add(10 * time.Minute),
+			}); err != nil {
+				t.Errorf("ObservePullRequest: %v", err)
+			}
+		})
+	}
+	wg.Wait()
+	var jobs, events int
+	if err := h.store.DB().QueryRowContext(h.ctx, `SELECT (SELECT COUNT(*) FROM analysis_jobs), (SELECT COUNT(*) FROM pr_events)`).Scan(&jobs, &events); err != nil {
+		t.Fatal(err)
+	}
+	if jobs != 1 || events != 1 {
+		t.Fatalf("jobs = %d, events = %d; want exactly one of each", jobs, events)
+	}
+	// Overdue candidate after a restart becomes eligible exactly once.
+	h.clock.Advance(time.Hour)
+	h.reopen()
+	if s := h.status(); s.Pending != 1 {
+		t.Fatalf("pending after restart = %d", s.Pending)
+	}
+	h.claim("w")
+	h.noWork()
+}
