@@ -49,7 +49,29 @@ next production phase.
    and remove drafts. Head SHAs are frozen as listed.
 4. `pradar corpus freeze manifest.json` validates the breadth rules and stores
    the manifest under its content id; any later change is a new corpus.
-5. `pradar run --instance https://<forge> --model <model>`, subscribe the same
+5. Before scoring, run the live smoke check once:
+   `pradar smoke --instance https://<forge> --pull-request owner/name#N --model <model>`.
+   It validates the Keychain token, repository access, pull-request metadata,
+   one real restricted Claude analysis with contract validation, workspace
+   cleanup and rendering, and writes nothing to the database.
+6. `pradar run --instance https://<forge> --model <model>`, subscribe the same
    repositories from the timeline (import "all" so the frozen heads are
    analysed), let the anti-rebond and the worker run, then score each item
    from its detail page and read `/evaluation` and `/evaluation/report.json`.
+
+2026-09-17 — First live evidence (agent, on the user's test repository).
+
+- Instance `git.mbvsi.fr` runs Forgejo 14.0.2; the read-only token is stored in
+  the Keychain only.
+- `pradar corpus candidates` listed 50 pull requests of `merlin/docs` across
+  pages with correct states (open, merged, closed), head SHAs and change sizes.
+- `pradar smoke` on `merlin/docs#187` passed every step with model `sonnet`:
+  repository access 89 ms, metadata 49 ms, analysis and contract validation
+  23 s (4 turns, no web request, estimated cost 0.10 USD), cleanup, rendering.
+  The body used Mermaid, a file tree and a table, with no HTML.
+- `merlin/docs` alone cannot form the scored corpus: it is one repository,
+  documentation only, and every recent author is human. The frozen corpus
+  still needs a second or third repository with agent-authored, CI and
+  infrastructure pull requests.
+- Not yet proven: that the `show-me` skill itself was invoked (session
+  persistence is disabled, so the tool trace is not kept).
