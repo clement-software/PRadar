@@ -43,6 +43,7 @@ func (s *Server) handler() http.Handler {
 		"duration": func(d time.Duration) string { return d.Round(time.Second).String() },
 		"join":     strings.Join,
 		"prPath":   prPath,
+		"safeURL":  safeURL,
 	}).ParseFS(content, "templates/*.html"))
 	assets, _ := fs.Sub(content, "assets")
 
@@ -167,6 +168,16 @@ func (s *Server) timeline(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	s.render(w, "timeline.html", data)
+}
+
+// safeURL keeps only absolute http(s) links; anything else renders as an
+// inert empty href so a hostile Forgejo or model value cannot run code.
+func safeURL(raw string) string {
+	parsed, err := url.Parse(raw)
+	if err != nil || (parsed.Scheme != "https" && parsed.Scheme != "http") || parsed.Host == "" {
+		return ""
+	}
+	return parsed.String()
 }
 
 // prPath is the detail path of a pull request; '#' must be escaped so it is

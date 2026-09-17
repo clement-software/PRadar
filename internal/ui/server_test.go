@@ -2,8 +2,10 @@ package ui_test
 
 import (
 	"context"
+	"fmt"
 	"io"
 	"log/slog"
+	"math"
 	"net/http"
 	"net/url"
 	"strings"
@@ -134,4 +136,124 @@ func TestVisualizer_RefusesNonLoopbackAddress(t *testing.T) {
 	if err := server.Serve(t.Context(), "0.0.0.0:0", nil); err == nil {
 		t.Fatal("non-loopback bind accepted")
 	}
+}
+
+func hostilePR(t *testing.T, v *visualizer, number int64, head string, at time.Time) {
+	t.Helper()
+	ref := pullrequest.Ref{Repository: controlled.Repository, Number: number}
+	if _, err := v.store.ObservePullRequest(t.Context(), app.ObservationRequest{
+		Observation: pullrequest.Observation{Ref: ref, Title: `<script>alert("title")</script> PR ` + head, Body: "b", Author: "<b>mallory</b>",
+			State: pullrequest.StateOpen, HeadSHA: head, HTMLURL: "javascript:alert(1)", UpdatedAt: at},
+		Profile: profile, Schedule: true, NotBefore: at,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	job, err := v.store.Claim(t.Context(), time.Now().Add(time.Minute), "w-"+head)
+	if err != nil {
+		t.Fatal(err)
+	}
+	analysis := pullrequest.Analysis{
+		SchemaVersion: pullrequest.SchemaVersion, PullRequest: ref.Key(), HeadSHA: head, Status: pullrequest.AnalysisOK,
+		Intent: "<img src=x onerror=alert(1)> intent " + head, Importance: pullrequest.ImportanceHigh, Risks: []string{"<svg onload=alert(1)>"},
+		Body: "<iframe src=//evil></iframe>\n\n```mermaid\nflowchart LR\n A-->B\n```", ChangeSincePrevious: "",
+	}
+	if _, err := v.store.Complete(t.Context(), job, analysis, pullrequest.Provenance{Profile: profile}); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestVisualizer_OrdersCartesAndKeepsHostileValuesInert(t *testing.T) {
+	t.Parallel()
+	v := start(t)
+	if err := v.store.PutSubscription(t.Context(), app.Subscription{Repository: controlled.Repository, HTMLURL: "https://forge.example/controlled/demo", Active: true}); err != nil {
+		t.Fatal(err)
+	}
+	hostilePR(t, v, 7, "older", time.Now().Add(-time.Hour))
+	time.Sleep(1100 * time.Millisecond) // activity is recorded with second precision
+	hostilePR(t, v, 8, "newer", time.Now())
+	status, body := v.get("/")
+	if status != http.StatusOK {
+		t.Fatalf("status %d", status)
+	}
+	if strings.Index(body, "PR newer") > strings.Index(body, "PR older") {
+		t.Error("cartes must be ordered by most recent activity first")
+	}
+	if strings.Count(body, `<li class="card`) != 2 {
+		t.Error("one carte per pull request expected")
+	}
+	for _, forbidden := range []string{"<script>", "<img", "<svg", "<iframe", `href="javascript:`, "<b>mallory</b>"} {
+		if strings.Contains(body, forbidden) {
+			t.Errorf("timeline renders hostile value %q", forbidden)
+		}
+	}
+	if !strings.Contains(body, "Lien Forgejo invalide") {
+		t.Error("an unsafe Forgejo URL must be replaced by an inert notice")
+	}
+	_, detail := v.get("/pr/controlled/demo%238")
+	for _, forbidden := range []string{"<script>", "<img", "<svg", "<iframe", `href="javascript:`} {
+		if strings.Contains(detail, forbidden) {
+			t.Errorf("detail renders hostile value %q", forbidden)
+		}
+	}
+	if !strings.Contains(detail, `<pre class="mermaid">`) || !strings.Contains(detail, "&lt;img src=x") {
+		t.Error("model Markdown must stay sanitised (escaped intent, inert Mermaid source) while Mermaid renders in strict mode client side")
+	}
+	if _, filtered := v.get("/?importance=low"); strings.Contains(filtered, `<li class="card`) {
+		t.Error("importance filter must hide non-matching cartes")
+	}
+	if _, filtered := v.get("/?risk=" + url.QueryEscape("<svg onload=alert(1)>")); strings.Count(filtered, `<li class="card`) != 2 {
+		t.Error("risk filter must match the recorded risk without mutating data")
+	}
+}
+
+func TestVisualizer_AccessibilityAndThemes(t *testing.T) {
+	t.Parallel()
+	v := start(t)
+	_, page := v.get("/")
+	for _, want := range []string{`lang="fr"`, `class="skip"`, `id="main"`, `aria-label=`, `<label>`, `<h1`} {
+		if !strings.Contains(page, want) {
+			t.Errorf("page lacks %q", want)
+		}
+	}
+	_, css := v.get("/assets/style.css")
+	for _, want := range []string{"color-scheme: light dark", "prefers-color-scheme: dark", ":focus-visible", "outline: 3px solid"} { //nolint:misspell // CSS keywords
+		if !strings.Contains(css, want) {
+			t.Errorf("stylesheet lacks %q", want)
+		}
+	}
+	_, js := v.get("/assets/app.js")
+	if !strings.Contains(js, `securityLevel: "strict"`) {
+		t.Error("Mermaid must run in strict mode")
+	}
+	for _, pair := range [][2]string{{"#17202a", "#f6f8fb"}, {"#4b5563", "#ffffff"}, {"#e6edf3", "#0f1419"}, {"#b3bcc7", "#161c24"}, {"#8ab4ff", "#161c24"}, {"#2f6fed", "#ffffff"}} {
+		if ratio := contrast(pair[0], pair[1]); ratio < 4.5 {
+			t.Errorf("contrast %s on %s = %.2f, below WCAG AA 4.5", pair[0], pair[1], ratio)
+		}
+		if !strings.Contains(css, pair[0]) || !strings.Contains(css, pair[1]) {
+			t.Errorf("stylesheet no longer uses %s/%s; update the contrast check", pair[0], pair[1])
+		}
+	}
+}
+
+func contrast(fg, bg string) float64 {
+	lum := func(hex string) float64 {
+		var rgb [3]float64
+		for i := range 3 {
+			var c int
+			_, _ = fmt.Sscanf(hex[1+2*i:3+2*i], "%02x", &c)
+			v := float64(c) / 255
+			if v <= 0.03928 {
+				v /= 12.92
+			} else {
+				v = math.Pow((v+0.055)/1.055, 2.4)
+			}
+			rgb[i] = v
+		}
+		return 0.2126*rgb[0] + 0.7152*rgb[1] + 0.0722*rgb[2]
+	}
+	l1, l2 := lum(fg), lum(bg)
+	if l1 < l2 {
+		l1, l2 = l2, l1
+	}
+	return (l1 + 0.05) / (l2 + 0.05)
 }

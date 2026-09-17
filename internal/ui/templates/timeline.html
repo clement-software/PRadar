@@ -22,7 +22,7 @@
         <h2 id="card-{{.Ref.Number}}"><a href="{{prPath .Ref}}">{{.Title}}</a></h2>
         {{if eq .Analysis.Status "unavailable"}}<p class="unavailable">Analyse indisponible</p>{{else}}<p class="intent">{{.Analysis.Intent}}</p>{{end}}
         <p class="badges"><span class="badge importance">Importance : {{.Analysis.Importance}}</span>{{range .Analysis.Risks}} <span class="badge risk">{{.}}</span>{{end}}</p>
-        <p class="actions"><a href="{{.HTMLURL}}" rel="noopener noreferrer">Ouvrir dans Forgejo</a></p>
+        <p class="actions">{{with safeURL .HTMLURL}}<a href="{{.}}" rel="noopener noreferrer">Ouvrir dans Forgejo</a>{{else}}<span class="problem">Lien Forgejo invalide</span>{{end}}</p>
       </article>
     </li>
   {{end}}
