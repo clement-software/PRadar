@@ -50,6 +50,8 @@ func run(args []string) error {
 		return runToken(args[1:])
 	case "corpus":
 		return runCorpus(args[1:])
+	case "smoke":
+		return runSmoke(args[1:])
 	default:
 		return fmt.Errorf("unknown command %q", args[0])
 	}
@@ -135,6 +137,98 @@ func runCorpusCandidates(args []string) error {
 	encoder := json.NewEncoder(os.Stdout)
 	encoder.SetIndent("", "  ")
 	return encoder.Encode(manifest)
+}
+
+// runSmoke validates the live boundaries once before a scored run. With
+// --controlled-forge it exercises only the Claude CLI against the fixture pull
+// request, which needs no Forgejo instance or token.
+func runSmoke(args []string) error {
+	fs := flag.NewFlagSet("smoke", flag.ContinueOnError)
+	raw := fs.String("instance", os.Getenv("PRADAR_FORGEJO_INSTANCE"), "Forgejo instance URL (https)")
+	pull := fs.String("pull-request", "", "pull request to analyse, as owner/name#number")
+	controlledForge := fs.Bool("controlled-forge", false, "use the fixture pull request instead of a Forgejo instance")
+	model := fs.String("model", os.Getenv("PRADAR_CLAUDE_MODEL"), "the Claude model to validate")
+	claude := fs.String("claude", "claude", "Claude CLI executable")
+	timeout := fs.Duration("analysis-timeout", 10*time.Minute, "maximum duration of the Claude invocation")
+	maxTurns := fs.Int("max-turns", 12, "maximum agentic turns")
+	maxBudget := fs.Float64("max-budget-usd", 1, "maximum estimated spend of the smoke analysis")
+	if err := fs.Parse(args); err != nil {
+		return err
+	}
+	if *model == "" {
+		return errors.New("--model is required")
+	}
+	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	defer stop()
+	log := slog.New(slog.NewJSONHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelWarn}))
+
+	var (
+		forge app.Forge
+		ref   pullrequest.Ref
+	)
+	if *controlledForge {
+		forge = controlled.Forge{Now: time.Now}
+		ref = pullrequest.Ref{Repository: controlled.Repository, Number: 1}
+	} else {
+		instance, err := forgejo.ParseInstance(*raw, false)
+		if err != nil {
+			return fmt.Errorf("--instance: %w", err)
+		}
+		if ref, err = pullrequest.ParseKey(*pull); err != nil {
+			return fmt.Errorf("--pull-request: %w", err)
+		}
+		token, err := (keychain.Store{}).Lookup(ctx, instance.Host())
+		if err != nil {
+			return fmt.Errorf("keychain: %w", err)
+		}
+		fmt.Fprintln(os.Stderr, "ok   keychain token lookup for", instance.Host())
+		forge = forgejo.NewClient(instance, token)
+	}
+
+	claudePath, err := exec.LookPath(*claude)
+	if err != nil {
+		return fmt.Errorf("claude CLI not found: %w", err)
+	}
+	scratch, err := os.MkdirTemp("", "pradar-smoke-")
+	if err != nil {
+		return err
+	}
+	defer os.RemoveAll(scratch)
+	pluginDir, err := claudecli.InstallPlugin(scratch)
+	if err != nil {
+		return err
+	}
+	root, err := workspace.New(filepath.Join(scratch, "workspaces"), 8<<20)
+	if err != nil {
+		return err
+	}
+	smoke := &app.Smoke{
+		Forge: forge, Workspace: root, Now: time.Now, Log: log,
+		Analyzer: &claudecli.Analyzer{Executable: claudePath, PluginDir: pluginDir, Model: *model, Timeout: *timeout,
+			MaxOutput: 4 << 20, MaxTurns: *maxTurns, MaxBudgetUSD: *maxBudget, Env: claudecli.MinimalEnv()},
+		Profile: pullrequest.Profile{PromptVersion: claudecli.PromptVersion, SkillVersion: claudecli.SkillVersion, Engine: claudecli.Engine, Model: *model},
+		Render:  func(markdown string) string { return string(ui.RenderMarkdown(markdown)) },
+	}
+	report := smoke.Run(ctx, ref)
+	for _, step := range report.Steps {
+		status := "ok  "
+		if step.Err != nil {
+			status = "FAIL"
+		}
+		fmt.Fprintf(os.Stderr, "%s %s (%s)\n", status, step.Name, step.Duration.Round(time.Millisecond))
+		if step.Err != nil {
+			fmt.Fprintln(os.Stderr, "     ", step.Err)
+		}
+	}
+	if !report.Passed() {
+		return errors.New("smoke run failed")
+	}
+	encoder := json.NewEncoder(os.Stdout)
+	encoder.SetIndent("", "  ")
+	return encoder.Encode(struct {
+		Analysis pullrequest.Analysis `json:"analysis"`
+		Usage    map[string]any       `json:"usage"`
+	}{report.Analysis, report.Usage})
 }
 
 func defaultDataDir() string {
