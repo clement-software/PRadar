@@ -62,6 +62,25 @@ substitutes at the interfaces above.
 - Retry delay, lease duration and polling are process configuration; there is
   no daily ceiling by product decision.
 
+## Divergence to arbitrate
+
+[ADR-0005](../adr/0005-isolate-untrusted-pull-request-content.md) grants the
+engine "the pinned `show-me` skill and read-only file discovery tools". Two
+real runs on 17 September 2026 showed that the `Skill` tool cannot deliver
+only the pinned skill: the CLI also exposed every skill installed for the
+user (`update-config`, `schedule`, `loop`, `code-review` and others), and the
+`/show-me` prefix never expanded because a plugin skill is namespaced
+`show-me:show-me`, so no analysis actually used the pinned guidance.
+
+The adapter therefore disables every skill, drops the `Skill` tool and
+appends the pinned `SKILL.md` verbatim to the system prompt, which leaves
+exactly the `Read`, `Glob` and `Grep` tools the ADR names. It also verifies
+the startup event on every invocation and fails the analysis when the granted
+tools, skills, plugins, MCP servers or permission mode are wider than the
+policy. The decision is unchanged; its delivery mechanism is not what the ADR
+describes, so the ADR text should be superseded in a design step rather than
+edited here.
+
 ## Unknowns
 
 - Live Forgejo payload compatibility and real `show-me` usefulness remain
