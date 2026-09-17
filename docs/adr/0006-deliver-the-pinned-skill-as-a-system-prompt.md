@@ -1,6 +1,6 @@
 # ADR-0006: Deliver the pinned skill as a system prompt
 
-- **Status:** Proposed; supersedes the delivery mechanism of ADR-0005
+- **Status:** Accepted on 18 September 2026; supersedes the delivery mechanism of ADR-0005
 - **Date:** 2026-09-17
 - **Owners:** PRadar maintainers
 - **Related:** [ADR-0005](0005-isolate-untrusted-pull-request-content.md), `docs/product/PRD.md`, `.scratch/pradar-demonstrator/issues/06-analyse-one-due-version-with-restricted-claude.md`

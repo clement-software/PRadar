@@ -1,6 +1,6 @@
 # ADR-0005: Isolate untrusted pull-request content
 
-- **Status:** Accepted; its skill-delivery mechanism is superseded by the proposed [ADR-0006](0006-deliver-the-pinned-skill-as-a-system-prompt.md)
+- **Status:** Accepted; its skill-delivery mechanism is superseded by [ADR-0006](0006-deliver-the-pinned-skill-as-a-system-prompt.md)
 - **Date:** 2026-09-16
 - **Owners:** PRadar maintainers
 - **Related:** `docs/product/PRD.md`, `docs/architecture/failure-model.md`
