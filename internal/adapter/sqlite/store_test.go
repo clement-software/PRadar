@@ -528,3 +528,47 @@ func TestObserve_ConcurrentSchedulingCreatesOneWorkItem(t *testing.T) {
 	h.claim("w")
 	h.noWork()
 }
+
+func TestRestart_PreservesUserStateGenerationAndHistory(t *testing.T) {
+	t.Parallel()
+	h := open(t)
+	h.observe("sha-1", true)
+	h.clock.Advance(11 * time.Minute)
+	h.complete(h.claim("w"))
+	if err := h.store.MarkRead(h.ctx, ref); err != nil {
+		t.Fatal(err)
+	}
+	if err := h.store.Archive(h.ctx, ref); err != nil {
+		t.Fatal(err)
+	}
+	if err := h.store.Unsubscribe(h.ctx, ref.Repository); err != nil {
+		t.Fatal(err)
+	}
+	h.reopen()
+	detail := h.detail()
+	if !detail.Archived || detail.Card.Unread || len(detail.History) != 1 || !detail.HasCard {
+		t.Fatalf("restart lost user state or history: %+v", detail)
+	}
+	subscription, err := h.store.GetSubscription(h.ctx, ref.Repository)
+	if err != nil || subscription.Active || subscription.Generation != 2 {
+		t.Fatalf("subscription after restart = %+v, %v", subscription, err)
+	}
+	if got := len(h.cards()); got != 0 {
+		t.Fatalf("archived carte reappeared after restart: %d", got)
+	}
+}
+
+func TestClaim_ReportsExpiredLeaseRecovery(t *testing.T) {
+	t.Parallel()
+	h := open(t)
+	h.observe("sha-1", true)
+	h.clock.Advance(11 * time.Minute)
+	if first := h.claim("crashed"); first.PreviousOutcome != "" {
+		t.Fatalf("first claim outcome = %q", first.PreviousOutcome)
+	}
+	h.clock.Advance(2 * time.Minute)
+	recovered := h.claim("restarted")
+	if recovered.Attempt != 2 || recovered.PreviousOutcome == "" {
+		t.Fatalf("recovered claim = attempt %d outcome %q", recovered.Attempt, recovered.PreviousOutcome)
+	}
+}

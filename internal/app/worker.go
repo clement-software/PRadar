@@ -104,7 +104,11 @@ func (w *Worker) RunOne(ctx context.Context) error {
 		return err
 	}
 	log := w.Log.With("pull_request", job.Ref.Key(), "head", job.HeadSHA, "attempt", job.Attempt)
-	log.Info("analysis claimed")
+	if job.PreviousOutcome != "" {
+		log.Info("analysis reclaimed", "previous_outcome", job.PreviousOutcome)
+	} else {
+		log.Info("analysis claimed")
+	}
 
 	jobCtx, cancel := context.WithCancelCause(ctx)
 	w.mu.Lock()

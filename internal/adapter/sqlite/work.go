@@ -27,15 +27,16 @@ func (s *Store) Claim(ctx context.Context, leaseUntil time.Time, token string) (
 		)
 		err := tx.QueryRowContext(ctx, `
 UPDATE analysis_jobs
-SET status = 'running', attempts = attempts + 1, lease_until_unix = ?, lease_token = ?
+SET status = 'running', attempts = attempts + 1, lease_until_unix = ?, lease_token = ?,
+    last_error = CASE WHEN status = 'running' THEN 'lease expired before completion' ELSE last_error END
 WHERE id = (
   SELECT id FROM analysis_jobs
   WHERE (status = 'queued' AND available_unix <= ?) OR (status = 'running' AND lease_until_unix <= ?)
   ORDER BY available_unix, id LIMIT 1
 )
-RETURNING id, identity, pr_key, generation, head_sha, input_revision, profile_json, attempts`,
+RETURNING id, identity, pr_key, generation, head_sha, input_revision, profile_json, attempts, last_error`,
 			leaseUntil.Unix(), token, now, now).
-			Scan(&job.ID, &job.Identity, &key, &job.Generation, &job.HeadSHA, &job.Revision, &profile, &job.Attempt)
+			Scan(&job.ID, &job.Identity, &key, &job.Generation, &job.HeadSHA, &job.Revision, &profile, &job.Attempt, &job.PreviousOutcome)
 		if errors.Is(err, sql.ErrNoRows) {
 			return app.ErrNoWork
 		}

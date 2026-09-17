@@ -4,10 +4,10 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"io"
 	"log/slog"
 	"os"
 	"path/filepath"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -140,6 +140,7 @@ func (w *fakeWorkspace) Materialise(_ context.Context, name string, files map[st
 func (w *fakeWorkspace) Scavenge(context.Context) error { return nil }
 
 type fixture struct {
+	logs      *syncBuffer
 	t         *testing.T
 	ctx       context.Context
 	clock     *clock
@@ -182,7 +183,10 @@ func (f *fixture) wire() {
 	}
 	f.t.Cleanup(func() { _ = store.Close() })
 	f.store = store
-	log := slog.New(slog.NewTextHandler(io.Discard, nil))
+	if f.logs == nil {
+		f.logs = &syncBuffer{}
+	}
+	log := slog.New(slog.NewJSONHandler(f.logs, nil))
 	f.collector = &app.Collector{Forge: f.forge, Store: store, Profile: profile, Debounce: 10 * time.Minute, Now: f.clock.Now, Log: log}
 	f.worker = &app.Worker{Store: store, Analyzer: f.analyzer, Workspace: f.workspace, Diffs: f.forge, Now: f.clock.Now,
 		Lease: time.Minute, Backoff: app.ExponentialBackoff(time.Minute), Log: log}
@@ -399,6 +403,15 @@ func TestWorker_ThirdFailurePublishesUnavailable(t *testing.T) {
 	if len(f.workspace.cleaned) != 3 {
 		t.Fatalf("workspace cleaned %d times, want 3", len(f.workspace.cleaned))
 	}
+	logs := f.logs.String()
+	for _, want := range []string{"analysis claimed", "analysis retry scheduled", "analysis unavailable after exhausted attempts", "engine exploded"} {
+		if !strings.Contains(logs, want) {
+			t.Errorf("logs lack %q", want)
+		}
+	}
+	if strings.Contains(logs, `"body"`) || strings.Contains(logs, observation(42, "", time.Time{}).Body) {
+		t.Error("logs must not contain the pull-request description")
+	}
 	if err := f.timeline.Replay(f.ctx, ref); !errors.Is(err, app.ErrReplayUnchanged) {
 		t.Fatalf("replay with unchanged profile = %v", err)
 	}
@@ -486,6 +499,23 @@ func TestWorker_InterruptionReleasesWithoutConsumingAttempt(t *testing.T) {
 	if detail.Provenance.Attempt != 1 {
 		t.Fatalf("attempt after shutdown release = %d, want 1", detail.Provenance.Attempt)
 	}
+}
+
+type syncBuffer struct {
+	mu  sync.Mutex
+	buf strings.Builder
+}
+
+func (b *syncBuffer) Write(p []byte) (int, error) {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	return b.buf.Write(p)
+}
+
+func (b *syncBuffer) String() string {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	return b.buf.String()
 }
 
 func waitFor(t *testing.T, condition func() bool) {

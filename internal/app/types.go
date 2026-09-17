@@ -67,6 +67,9 @@ type Job struct {
 	Profile         pullrequest.Profile
 	Attempt         int
 	LeaseToken      string
+	// PreviousOutcome explains why an earlier attempt ended: a technical
+	// failure message or an expired lease. Empty on the first attempt.
+	PreviousOutcome string
 }
 
 // Card is the visible projection of one pull request in the timeline.

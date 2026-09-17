@@ -7,28 +7,28 @@ third failure produces an Analyse indisponible with a safe Rejeu path.
 
 **Blocked by:** 06: Analyse one due version with restricted Claude.
 
-**Status:** ready-for-agent
+**Status:** done
 
-- [ ] Concurrent claim attempts grant exactly one live lease for a work item.
-- [ ] Completion and retry require the matching unexpired lease token; a late
+- [x] Concurrent claim attempts grant exactly one live lease for a work item.
+- [x] Completion and retry require the matching unexpired lease token; a late
   worker that lost ownership cannot mutate the result or Carte.
-- [ ] Running work whose lease expires after interruption becomes claimable
+- [x] Running work whose lease expires after interruption becomes claimable
   again on startup or by the worker.
-- [ ] A technical analysis failure schedules at most three durable attempts with
+- [x] A technical analysis failure schedules at most three durable attempts with
   increasing delay and no in-memory retry authority.
-- [ ] Invalid envelopes, invalid or mismatched schemas, non-zero exit, timeout,
+- [x] Invalid envelopes, invalid or mismatched schemas, non-zero exit, timeout,
   output overflow, and workspace failure follow the same bounded failure policy.
-- [ ] The third failed attempt publishes Analyse indisponible while keeping the
+- [x] The third failed attempt publishes Analyse indisponible while keeping the
   Forgejo link and a visible Rejeu action.
-- [ ] Rejeu requires a changed prompt, skill, engine, or model identity and
+- [x] Rejeu requires a changed prompt, skill, engine, or model identity and
   preserves all earlier results and failures in history.
-- [ ] Intentional shutdown or Désabonnement cancellation hands ownership back
+- [x] Intentional shutdown or Désabonnement cancellation hands ownership back
   without consuming another failure attempt.
-- [ ] Workspace cleanup is observable after success, failure, cancellation, and
+- [x] Workspace cleanup is observable after success, failure, cancellation, and
   startup scavenging; malicious names and symlinks cannot escape the owned root.
-- [ ] The visualizer and structured logs expose pending, running, retry, lease
+- [x] The visualizer and structured logs expose pending, running, retry, lease
   recovery, terminal failure, and cleanup outcomes without PR bodies or secrets.
-- [ ] Race-enabled integration tests cover one-winner claim, lost-lease
+- [x] Race-enabled integration tests cover one-winner claim, lost-lease
   rejection, expiry recovery, retry exhaustion, cancellation, and restart.
-- [ ] `make verify` passes.
+- [x] `make verify` passes.
 
