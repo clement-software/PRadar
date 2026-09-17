@@ -11,6 +11,7 @@ import (
 	"io"
 	"log/slog"
 	"os"
+	"os/exec"
 	"os/signal"
 	"path/filepath"
 	"strings"
@@ -18,6 +19,7 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/clement-software/PRadar/internal/adapter/claudecli"
 	"github.com/clement-software/PRadar/internal/adapter/forgejo"
 	"github.com/clement-software/PRadar/internal/adapter/keychain"
 	"github.com/clement-software/PRadar/internal/adapter/sqlite"
@@ -85,6 +87,11 @@ type config struct {
 	debounce     time.Duration
 	lease        time.Duration
 	instance     string
+	model        string
+	claude       string
+	analysisTime time.Duration
+	maxTurns     int
+	maxBudgetUSD float64
 }
 
 func runDemonstrator(args []string) error {
@@ -98,6 +105,11 @@ func runDemonstrator(args []string) error {
 	fs.DurationVar(&cfg.debounce, "debounce", 10*time.Minute, "anti-rebond window per pull request")
 	fs.DurationVar(&cfg.lease, "lease", 15*time.Minute, "analysis lease duration")
 	fs.StringVar(&cfg.instance, "instance", os.Getenv("PRADAR_FORGEJO_INSTANCE"), "Forgejo instance URL (https)")
+	fs.StringVar(&cfg.model, "model", os.Getenv("PRADAR_CLAUDE_MODEL"), "the single Claude model used for every analysis")
+	fs.StringVar(&cfg.claude, "claude", "claude", "Claude CLI executable")
+	fs.DurationVar(&cfg.analysisTime, "analysis-timeout", 10*time.Minute, "maximum duration of one Claude invocation")
+	fs.IntVar(&cfg.maxTurns, "max-turns", 12, "maximum agentic turns per Claude invocation")
+	fs.Float64Var(&cfg.maxBudgetUSD, "max-budget-usd", 2, "maximum estimated spend per Claude invocation (0 disables)")
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
@@ -129,9 +141,20 @@ func runDemonstrator(args []string) error {
 			return err
 		}
 		forge = forgejo.NewClient(instance, token)
-		// ponytail: the restricted Claude analyzer lands with ticket 06; until then live abonnements collect but cannot analyse.
-		analyzer = unavailableAnalyzer{}
-		profile = pullrequest.Profile{PromptVersion: "none", SkillVersion: "none", Engine: "none", Model: "none"}
+		if cfg.model == "" {
+			return errors.New("--model is required in live mode")
+		}
+		claudePath, err := exec.LookPath(cfg.claude)
+		if err != nil {
+			return fmt.Errorf("claude CLI not found: %w", err)
+		}
+		pluginDir, err := claudecli.InstallPlugin(filepath.Join(cfg.dataDir, "plugins"))
+		if err != nil {
+			return err
+		}
+		analyzer = &claudecli.Analyzer{Executable: claudePath, PluginDir: pluginDir, Model: cfg.model, Timeout: cfg.analysisTime,
+			MaxOutput: 4 << 20, MaxTurns: cfg.maxTurns, MaxBudgetUSD: cfg.maxBudgetUSD, Env: claudecli.MinimalEnv()}
+		profile = pullrequest.Profile{PromptVersion: claudecli.PromptVersion, SkillVersion: claudecli.SkillVersion, Engine: claudecli.Engine, Model: cfg.model}
 	}
 
 	if err := os.MkdirAll(cfg.dataDir, 0o700); err != nil {
@@ -172,11 +195,4 @@ func runDemonstrator(args []string) error {
 	stop()
 	wg.Wait()
 	return err
-}
-
-// unavailableAnalyzer is the placeholder engine of live mode before ticket 06.
-type unavailableAnalyzer struct{}
-
-func (unavailableAnalyzer) Analyse(context.Context, app.AnalysisRequest) (app.AnalysisResult, error) {
-	return app.AnalysisResult{}, errors.New("no analysis engine is configured in this build")
 }

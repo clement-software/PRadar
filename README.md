@@ -48,7 +48,7 @@ go run ./cmd/pradar run --controlled
 
 # instance réelle : jeton lecture seule dans le trousseau macOS, puis lancement
 printf '%s' "$TOKEN" | go run ./cmd/pradar token set --instance https://forge.example
-go run ./cmd/pradar run --instance https://forge.example
+go run ./cmd/pradar run --instance https://forge.example --model <modèle Claude>
 ```
 
 Le visualiseur n'écoute que sur 127.0.0.1 ; son URL est imprimée au démarrage.

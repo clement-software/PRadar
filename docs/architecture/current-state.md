@@ -12,9 +12,9 @@ PRD gate, not the production design (see `target-state.md`).
 WAL mode, scavenges the owned workspace root, starts one polling collector and
 one analysis worker under a root context, and serves a loopback visualizer.
 `--controlled` substitutes a fixture Forgejo and a deterministic analyzer.
-`--instance <https url>` uses the real instance with the token read from the
-Keychain (`pradar token set`); until ticket 06 lands, live mode collects but
-its analyzer reports "no analysis engine", so analyses end `unavailable`.
+`--instance <https url> --model <model>` uses the real instance with the
+token read from the Keychain (`pradar token set`) and the restricted Claude
+CLI analyzer.
 
 ## Modules and seams
 
@@ -23,6 +23,7 @@ its analyzer reports "no analysis engine", so analyses end `unavailable`.
 | `internal/pullrequest` | Identity, input revision, analysis identity, `pradar.analysis.v1`, the pure `Reconcile` lifecycle decision | standard library only |
 | `internal/app` | Abonnements and reconciliation (`Collector`), the single leased worker (`Worker`), reading use cases (`Timeline`); declares the `Forge`, `CollectionStore`, `WorkStore`, `Workspace`, `Analyzer` and `ReadModel` interfaces it consumes | `internal/pullrequest` |
 | `internal/adapter/sqlite` | Schema, observation+scheduling transaction, atomic leased claim, completion with latest-only publication, read model, user state | `database/sql`, `modernc.org/sqlite`, `internal/app` |
+| `internal/adapter/claudecli` | Restricted `claude -p` invocation (`--restricted`, read-only tools, `dontAsk`, no session persistence, bounded turns/budget/timeout/output), embedded pinned HumanLayer `show-me` plugin (`showme/PIN`), envelope and `pradar.analysis.v1` decoding | `os/exec`, `internal/app` |
 | `internal/adapter/workspace` | Owned temporary root, safe materialisation, cleanup and startup scavenging | `os` |
 | `internal/adapter/forgejo` | Instance and repository URL validation, read-only bounded HTTP client (auth header, same-origin redirects only, transient retries, pagination, payload mapping, diff bound), self-redacting `Token` | `net/http`, `internal/pullrequest` |
 | `internal/adapter/keychain` | Token lookup and storage through `/usr/bin/security`; the token never enters SQLite, logs or exports | `os/exec`, `internal/adapter/forgejo` |

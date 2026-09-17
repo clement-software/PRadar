@@ -1,0 +1,5 @@
+upstream=https://github.com/humanlayer/skills
+path=plugins/show-me
+commit=3c2629142c5d437428269b1b722b08c0b87f574d
+plugin_version=1.0.1
+license=MIT
