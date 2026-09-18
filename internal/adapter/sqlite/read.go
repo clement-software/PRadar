@@ -139,13 +139,17 @@ FROM analysis_jobs`, now).Scan(&status.Pending, &status.Running, &status.Retryin
 	if err != nil {
 		return app.Status{}, err
 	}
-	status.Subscriptions = subscriptions
 	for _, subscription := range subscriptions {
-		if subscription.BlockedReason != "" {
-			status.Blocked = append(status.Blocked, subscription)
+		repository := app.RepositoryStatus{
+			Repository: subscription.Repository, Active: subscription.Active,
+			BlockedReason: subscription.BlockedReason, LastSyncAt: subscription.LastSyncAt,
 		}
-		if subscription.LastSyncAt.After(status.LastSyncAt) {
-			status.LastSyncAt = subscription.LastSyncAt
+		status.Repositories = append(status.Repositories, repository)
+		if repository.BlockedReason != "" {
+			status.Blocked = append(status.Blocked, repository)
+		}
+		if repository.LastSyncAt.After(status.LastSyncAt) {
+			status.LastSyncAt = repository.LastSyncAt
 		}
 	}
 	return status, nil

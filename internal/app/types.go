@@ -1,135 +1,80 @@
-// Package app holds the PRadar demonstrator use cases: subscriptions,
-// polling reconciliation, the single analysis worker, timeline reading and
-// evaluation. Interfaces are declared next to the code that consumes them and
-// implemented by adapters; nothing here imports SQL, HTTP, process or UI code.
+// Package app is the former single use-case package. It now only re-exports
+// the boundaries that own each concern, so callers can migrate one at a time.
+//
+// Deprecated: import internal/collect, internal/analyze or internal/timeline
+// directly. This façade is removed once every caller has moved.
 package app
 
 import (
-	"errors"
-	"time"
-
-	"github.com/clement-software/PRadar/internal/pullrequest"
+	"github.com/clement-software/PRadar/internal/analyze"
+	"github.com/clement-software/PRadar/internal/collect"
+	"github.com/clement-software/PRadar/internal/timeline"
 )
 
-// Errors shared by the store implementations and the use cases.
-var (
-	ErrNoWork          = errors.New("no analysis work is eligible")
-	ErrLeaseLost       = errors.New("analysis lease is no longer owned")
-	ErrNotFound        = errors.New("not found")
-	ErrReplayUnchanged = errors.New("replay requires a changed prompt, skill, engine or model")
-	ErrNotVisible      = errors.New("pull request has no visible carte")
+// Collection boundary.
+type (
+	Collector          = collect.Collector
+	Forge              = collect.Forge
+	CollectionStore    = collect.CollectionStore
+	Subscription       = collect.Subscription
+	SubscribeRequest   = collect.SubscribeRequest
+	ObservationRequest = collect.ObservationRequest
+	ImportMode         = collect.ImportMode
 )
 
-// ImportMode selects which currently open pull requests a new abonnement imports.
-type ImportMode string
-
-// Import modes offered when creating an abonnement.
+// Import modes of the collection boundary.
 const (
-	ImportNone ImportMode = "none"
-	ImportTen  ImportMode = "ten"
-	ImportAll  ImportMode = "all"
+	ImportNone = collect.ImportNone
+	ImportTen  = collect.ImportTen
+	ImportAll  = collect.ImportAll
 )
 
-// Subscription is one abonnement to a repository of the configured instance.
-type Subscription struct {
-	Repository      string // "owner/name"
-	HTMLURL         string
-	Generation      int64
-	Active          bool
-	BlockedReason   string
-	ExcludedAuthors []string
-	LastSyncAt      time.Time
-}
+// Analysis boundary.
+type (
+	Worker          = analyze.Worker
+	Job             = analyze.Job
+	WorkStore       = analyze.WorkStore
+	Workspace       = analyze.Workspace
+	Analyzer        = analyze.Analyzer
+	AnalysisRequest = analyze.AnalysisRequest
+	AnalysisResult  = analyze.AnalysisResult
+	ContentFetcher  = analyze.ContentFetcher
+	Smoke           = analyze.Smoke
+	SmokeReport     = analyze.SmokeReport
+	SmokeStep       = analyze.SmokeStep
+)
 
-// ObservationRequest is one durable observation plus its scheduling decision.
-type ObservationRequest struct {
-	Observation pullrequest.Observation
-	Profile     pullrequest.Profile
-	// Schedule is false when the pull request is only recorded as seen
-	// (abonnement import mode "none" or beyond the import limit).
-	Schedule  bool
-	NotBefore time.Time // anti-rebond deadline of the candidate
-}
+// MaxAttempts is the durable retry budget of one analysis identity.
+const MaxAttempts = analyze.MaxAttempts
 
-// Job is one claimed analysis work item.
-type Job struct {
-	ID              int64
-	Identity        pullrequest.Identity
-	Ref             pullrequest.Ref
-	Generation      int64
-	HeadSHA         string
-	PreviousHeadSHA string
-	// PreviousAnalysis is the latest successful analysis of this pull
-	// request under another identity, materialised as prior evidence.
-	PreviousAnalysis pullrequest.Analysis
-	Title            string
-	Body             string
-	Author           string
-	HTMLURL          string
-	Revision         pullrequest.InputRevision
-	Profile          pullrequest.Profile
-	Attempt          int
-	LeaseToken       string
-	// PreviousOutcome explains why an earlier attempt ended: a technical
-	// failure message or an expired lease. Empty on the first attempt.
-	PreviousOutcome string
-}
+// ExponentialBackoff is the increasing durable delay between attempts.
+var ExponentialBackoff = analyze.ExponentialBackoff
 
-// Card is the visible projection of one pull request in the timeline.
-type Card struct {
-	Ref       pullrequest.Ref
-	Title     string
-	Author    string
-	State     pullrequest.State
-	HTMLURL   string
-	UpdatedAt time.Time
-	Unread    bool
-	Analysis  pullrequest.Analysis
-}
+// Reading and evaluation boundary.
+type (
+	Timeline         = timeline.Reader
+	ReadModel        = timeline.ReadModel
+	Evaluator        = timeline.Evaluator
+	EvaluationStore  = timeline.EvaluationStore
+	Progress         = timeline.Progress
+	Scorecard        = timeline.Scorecard
+	Card             = timeline.Card
+	Detail           = timeline.Detail
+	HistoryEntry     = timeline.HistoryEntry
+	Event            = timeline.Event
+	Filter           = timeline.Filter
+	Status           = timeline.Status
+	RepositoryStatus = timeline.RepositoryStatus
+)
 
-// HistoryEntry is one analysis of the historique de pull request.
-type HistoryEntry struct {
-	Identity   pullrequest.Identity
-	Analysis   pullrequest.Analysis
-	Provenance pullrequest.Provenance
-	Published  bool
-	CreatedAt  time.Time
-}
-
-// Event is one lifecycle change of the historique de pull request.
-type Event struct {
-	At     time.Time
-	Kind   string
-	Detail string
-}
-
-// Detail is the full reading view of one pull request.
-type Detail struct {
-	Card       Card
-	Archived   bool
-	HasCard    bool
-	Identity   pullrequest.Identity // identity of the published analysis when HasCard
-	Provenance pullrequest.Provenance
-	History    []HistoryEntry
-	Events     []Event
-}
-
-// Filter narrows the timeline without mutating durable data.
-type Filter struct {
-	UnreadOnly bool
-	Repository string
-	State      pullrequest.State
-	Importance pullrequest.Importance
-	Risk       string
-}
-
-// Status summarises collection and analysis health for the visualizer.
-type Status struct {
-	LastSyncAt    time.Time
-	Pending       int
-	Running       int
-	Retrying      int
-	Unavailable   int
-	Blocked       []Subscription
-	Subscriptions []Subscription
-}
+// Errors of the three boundaries.
+var (
+	ErrNotFound        = collect.ErrNotFound
+	ErrNoWork          = analyze.ErrNoWork
+	ErrLeaseLost       = analyze.ErrLeaseLost
+	ErrInterrupted     = analyze.ErrInterrupted
+	ErrHeadMoved       = analyze.ErrHeadMoved
+	ErrNotVisible      = timeline.ErrNotVisible
+	ErrReplayUnchanged = timeline.ErrReplayUnchanged
+	ErrNoCorpus        = timeline.ErrNoCorpus
+)
