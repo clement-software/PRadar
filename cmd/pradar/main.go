@@ -37,6 +37,9 @@ import (
 	"github.com/clement-software/PRadar/internal/ui"
 )
 
+// version is set at build time; see the app target of the Makefile.
+var version = "dev"
+
 func main() {
 	if err := run(os.Args[1:]); err != nil {
 		fmt.Fprintln(os.Stderr, "pradar:", err)
@@ -46,7 +49,7 @@ func main() {
 
 func run(args []string) error {
 	if len(args) == 0 {
-		return errors.New("usage: pradar run [flags] | pradar token set --instance <url>")
+		return errors.New("usage: pradar run [flags] | pradar token set --instance <url> | pradar corpus ... | pradar smoke ... | pradar version")
 	}
 	switch args[0] {
 	case "run":
@@ -55,6 +58,9 @@ func run(args []string) error {
 		return runToken(args[1:])
 	case "corpus":
 		return runCorpus(args[1:])
+	case "version":
+		fmt.Println("pradar", version)
+		return nil
 	case "smoke":
 		return runSmoke(args[1:])
 	default:
@@ -406,7 +412,8 @@ func runDemonstrator(args []string) error {
 		}
 	}
 
-	server := &ui.Server{Reader: reader, Collector: collector, Evaluator: evaluator, Log: log, ParseRepositoryURL: instance.ParseRepositoryURL}
+	server := &ui.Server{Reader: reader, Collector: collector, Evaluator: evaluator, Log: log,
+		ParseRepositoryURL: instance.ParseRepositoryURL, Version: version}
 	if cfg.window {
 		// A window must never navigate away from the owned origin, so the
 		// interface hands external links to the browser through the server.

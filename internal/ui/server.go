@@ -45,6 +45,8 @@ type Server struct {
 	// a window never leaves the application's own origin. Nil renders direct
 	// links, which is what a browser session wants.
 	OpenExternal func(url string) error
+	// Version is the application version shown in the interface.
+	Version string
 
 	templates *template.Template
 }
@@ -132,6 +134,7 @@ type page struct {
 	States      []string
 	Importances []string
 	Engine      string // the engine configuration a user authorises
+	Version     string // the application version
 	Ref         pullrequest.Ref
 	Progress    timeline.Progress
 	CorpusItem  *evaluation.Item
@@ -172,7 +175,7 @@ func (s *Server) timeline(w http.ResponseWriter, r *http.Request) {
 		s.fail(w, err)
 		return
 	}
-	data := page{Title: "Timeline", View: "timeline", Status: status, Filter: filter, Notice: q.Get("notice"), Problem: q.Get("problem"),
+	data := page{Title: "Timeline", View: "timeline", Version: s.Version, Status: status, Filter: filter, Notice: q.Get("notice"), Problem: q.Get("problem"),
 		States: []string{"open", "closed", "merged"}, Importances: []string{"low", "medium", "high"},
 		Engine: collect.EngineFingerprint(s.Collector.Profile)}
 	seenRepo, seenRisk := map[string]bool{}, map[string]bool{}
@@ -230,7 +233,7 @@ func (s *Server) detail(w http.ResponseWriter, r *http.Request) {
 		s.fail(w, err)
 		return
 	}
-	data := page{Title: detail.Card.Title, View: "timeline", Detail: detail, Status: status, Ref: ref,
+	data := page{Title: detail.Card.Title, View: "timeline", Version: s.Version, Detail: detail, Status: status, Ref: ref,
 		Notice: r.URL.Query().Get("notice"), Problem: r.URL.Query().Get("problem")}
 	if s.Evaluator != nil {
 		if item, ok := s.Evaluator.Item(r.Context(), ref); ok {
@@ -293,7 +296,7 @@ func (s *Server) evaluation(w http.ResponseWriter, r *http.Request) {
 		s.fail(w, err)
 		return
 	}
-	data := page{Title: "Évaluation", View: "evaluation", Status: status, Notice: r.URL.Query().Get("notice"), Problem: r.URL.Query().Get("problem")}
+	data := page{Title: "Évaluation", View: "evaluation", Version: s.Version, Status: status, Notice: r.URL.Query().Get("notice"), Problem: r.URL.Query().Get("problem")}
 	progress, err := s.Evaluator.Report(r.Context())
 	switch {
 	case errors.Is(err, timeline.ErrNoCorpus):
