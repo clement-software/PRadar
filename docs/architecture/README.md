@@ -44,12 +44,9 @@ than silently changing this overview.
 - [ADR-0006](../adr/0006-deliver-the-pinned-skill-as-a-system-prompt.md):
   deliver the pinned skill as system-prompt content and verify the granted
   engine surface at runtime; supersedes the delivery mechanism of ADR-0005.
-
-## Proposed decisions
-
 - [ADR-0007](../adr/0007-native-window-over-the-owned-local-server.md): show
   the MVP interface in a native macOS window over the owned local server,
-  answering the PRD's open toolkit question. Awaiting arbitration.
+  answering the PRD's open toolkit question.
 
 ## Prototype evidence
 

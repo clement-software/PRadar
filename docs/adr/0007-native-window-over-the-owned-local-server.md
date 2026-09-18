@@ -1,6 +1,6 @@
 # ADR-0007: Show the MVP interface in a native window over an owned local server
 
-- **Status:** Proposed
+- **Status:** Accepted on 18 September 2026
 - **Date:** 2026-09-18
 - **Owners:** PRadar maintainers
 - **Related:** `docs/product/PRD.md` (open question 4), [ADR-0001](0001-modular-monolith-and-manual-wiring.md), [ADR-0005](0005-isolate-untrusted-pull-request-content.md), prototype branch `codex/prototype/pradar-desktop-shell` at `b6fc87f`

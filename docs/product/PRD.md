@@ -241,7 +241,8 @@ par hypothèse dans le PRD :
 2. SQLite convient-il à la file de travaux et à la lecture concurrente exigées
    par la tranche verticale ?
 3. Quelle version de Forgejo et quels dépôts composent le corpus reproductible ?
-4. Quel toolkit graphique Go affiche correctement Markdown, Mermaid, les diffs
-   et les états de focus sur macOS ?
+4. ~~Quel toolkit graphique Go affiche correctement Markdown, Mermaid, les
+   diffs et les états de focus sur macOS ?~~ Tranché le 18 septembre 2026 par
+   l'ADR-0007 : interface rendue en Go et affichée dans une fenêtre native.
 5. Quelle architecture applicative et quelle stratégie d'injection donnent les
    propriétaires et cycles de vie les plus explicites sans sur-conception ?
