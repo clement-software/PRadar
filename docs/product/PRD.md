@@ -191,6 +191,16 @@ moins d'une minute, sans erreur factuelle critique. Si ce seuil n'est pas
 atteint, l'analyse ou sa présentation est corrigée puis le corpus est réévalué
 avant de poursuivre la construction du produit.
 
+### Décision du 18 septembre 2026
+
+Le propriétaire produit reporte la notation du corpus après la mise en place de
+l'interface du MVP : les analyses seront retravaillées et évaluées avec cette
+interface plutôt qu'avec le visualiseur jetable. Le seuil reste inchangé —
+seize analyses utiles sur vingt en moins d'une minute, sans erreur factuelle
+critique — et conditionne toujours la poursuite du produit, mais il est mesuré
+plus tard dans la construction. Le démonstrateur a établi que la chaîne
+complète fonctionne sur des pull requests réelles.
+
 ## Validation en usage réel
 
 Après le démonstrateur, PRadar est utilisé quotidiennement pendant deux
@@ -231,7 +241,8 @@ par hypothèse dans le PRD :
 2. SQLite convient-il à la file de travaux et à la lecture concurrente exigées
    par la tranche verticale ?
 3. Quelle version de Forgejo et quels dépôts composent le corpus reproductible ?
-4. Quel toolkit graphique Go affiche correctement Markdown, Mermaid, les diffs
-   et les états de focus sur macOS ?
+4. ~~Quel toolkit graphique Go affiche correctement Markdown, Mermaid, les
+   diffs et les états de focus sur macOS ?~~ Tranché le 18 septembre 2026 par
+   l'ADR-0007 : interface rendue en Go et affichée dans une fenêtre native.
 5. Quelle architecture applicative et quelle stratégie d'injection donnent les
    propriétaires et cycles de vie les plus explicites sans sur-conception ?

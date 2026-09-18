@@ -7,7 +7,7 @@ next production phase.
 
 **Blocked by:** 10: Freeze and score the evaluation corpus.
 
-**Status:** ready-for-human
+**Status:** deferred (ready-for-human)
 
 - [ ] Before live execution, all automated verification gates pass and the
   worktree contains no unreviewed demonstrator change.
@@ -97,3 +97,8 @@ the abonnement created from the repository URL through the visualizer:
 Still not exercised live: réapparition after a new commit, which needs a push
 to the repository, and the three-failure unavailable path. Both are covered by
 the automated tests.
+
+2026-09-18 — Deferred by the product owner. The scored corpus run happens on
+the MVP interface rather than the disposable visualizer, so this ticket waits
+for that interface. The threshold and the protocol are unchanged, and the
+decision is recorded in `docs/product/PRD.md`.
