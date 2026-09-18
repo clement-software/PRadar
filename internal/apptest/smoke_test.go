@@ -8,12 +8,12 @@ import (
 	"testing"
 	"time"
 
-	"github.com/clement-software/PRadar/internal/app"
+	"github.com/clement-software/PRadar/internal/analyse"
 )
 
-func smoke(t *testing.T, forge *fakeForge, analyzer app.Analyzer, render func(string) string) app.SmokeReport {
+func smoke(t *testing.T, forge *fakeForge, analyzer analyse.Analyzer, render func(string) string) analyse.SmokeReport {
 	t.Helper()
-	s := &app.Smoke{
+	s := &analyse.Smoke{
 		Forge: forge, Workspace: &fakeWorkspace{root: t.TempDir()}, Analyzer: analyzer, Profile: profile,
 		Render: render, Now: time.Now, Log: slog.New(slog.NewTextHandler(io.Discard, nil)),
 	}

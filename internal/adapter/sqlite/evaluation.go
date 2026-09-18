@@ -7,8 +7,8 @@ import (
 	"errors"
 	"fmt"
 
-	"github.com/clement-software/PRadar/internal/app"
 	"github.com/clement-software/PRadar/internal/evaluation"
+	"github.com/clement-software/PRadar/internal/timeline"
 )
 
 // FreezeCorpus stores the manifest immutably under its content id.
@@ -29,7 +29,7 @@ func (s *Store) CurrentCorpus(ctx context.Context) (string, evaluation.Manifest,
 	)
 	err := s.db.QueryRowContext(ctx, `SELECT id, manifest_json FROM corpora ORDER BY frozen_unix DESC, id DESC LIMIT 1`).Scan(&id, &raw)
 	if errors.Is(err, sql.ErrNoRows) {
-		return "", evaluation.Manifest{}, app.ErrNoCorpus
+		return "", evaluation.Manifest{}, timeline.ErrNoCorpus
 	}
 	if err != nil {
 		return "", evaluation.Manifest{}, fmt.Errorf("read corpus: %w", err)
@@ -75,4 +75,4 @@ func (s *Store) Scores(ctx context.Context, corpusID string) (map[string]evaluat
 	return scores, rows.Err()
 }
 
-var _ app.EvaluationStore = (*Store)(nil)
+var _ timeline.EvaluationStore = (*Store)(nil)

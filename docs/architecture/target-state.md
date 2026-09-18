@@ -28,11 +28,11 @@ row scaffolding.
 | --- | --- | --- |
 | `internal/pullrequest` | Pull-request identity, analysis identity, lifecycle transitions, publication eligibility | No infrastructure interface |
 | `internal/collect` | Subscriptions, polling reconciliation, durable debounce | A forge reader and collection store defined here |
-| `internal/analyze` | Claim, workspace preparation, analyzer invocation, validation, retry, completion | Work store, workspace, and analyzer interfaces defined here |
+| `internal/analyse` | Claim, workspace preparation, analyzer invocation, validation, retry, completion | Work store, workspace, and analyzer interfaces defined here |
 | `internal/timeline` | Timeline/detail queries and read/archive use cases | A read model interface defined here |
 | `internal/adapter/forgejo` | Read-only Forgejo HTTP protocol and payload mapping | `net/http` and `internal/collect` contracts |
 | `internal/adapter/sqlite` | Transactions, projections, leases, migrations, and local durability | `database/sql` and consuming interfaces |
-| `internal/adapter/claudecli` | Bounded Claude subprocess and `pradar.analysis.v1` decoding | `os/exec` and `internal/analyze` contracts |
+| `internal/adapter/claudecli` | Bounded Claude subprocess and `pradar.analysis.v1` decoding | `os/exec` and `internal/analyse` contracts |
 | `internal/adapter/keychain` | Forgejo token lookup and storage | macOS Keychain API |
 | `internal/ui` | Desktop presentation and ephemeral navigation state | Application use cases and query models only |
 | `cmd/pradar` | Configuration, constructors, lifecycle, root cancellation, and process exit | Concrete adapters and application modules |

@@ -9,17 +9,19 @@ import (
 	"strconv"
 	"time"
 
-	"github.com/clement-software/PRadar/internal/app"
+	"github.com/clement-software/PRadar/internal/analyse"
+	"github.com/clement-software/PRadar/internal/collect"
 	"github.com/clement-software/PRadar/internal/pullrequest"
+	"github.com/clement-software/PRadar/internal/timeline"
 )
 
 // Claim grants the next eligible item to the caller in one atomic mutation.
-func (s *Store) Claim(ctx context.Context, leaseUntil time.Time, token string) (app.Job, error) {
+func (s *Store) Claim(ctx context.Context, leaseUntil time.Time, token string) (analyse.Job, error) {
 	if token == "" {
-		return app.Job{}, errors.New("lease token is required")
+		return analyse.Job{}, errors.New("lease token is required")
 	}
 	now := s.now().Unix()
-	var job app.Job
+	var job analyse.Job
 	err := s.tx(ctx, func(tx *sql.Tx) error {
 		var (
 			key     string
@@ -40,7 +42,7 @@ RETURNING id, identity, pr_key, generation, head_sha, input_revision, profile_js
 			leaseUntil.Unix(), token, now, now).
 			Scan(&job.ID, &job.Identity, &key, &job.Generation, &job.HeadSHA, &job.Revision, &profile, &job.Attempt, &job.PreviousOutcome)
 		if errors.Is(err, sql.ErrNoRows) {
-			return app.ErrNoWork
+			return analyse.ErrNoWork
 		}
 		if err != nil {
 			return fmt.Errorf("claim analysis work: %w", err)
@@ -70,14 +72,14 @@ SELECT result_json FROM analyses WHERE pr_key = ? AND status = 'ok' AND identity
 		return nil
 	})
 	if err != nil {
-		return app.Job{}, err
+		return analyse.Job{}, err
 	}
 	return job, nil
 }
 
 // Complete records the result and, when the identity is still the latest
 // observed one of an active abonnement generation, publishes the carte.
-func (s *Store) Complete(ctx context.Context, job app.Job, analysis pullrequest.Analysis, provenance pullrequest.Provenance) (bool, error) {
+func (s *Store) Complete(ctx context.Context, job analyse.Job, analysis pullrequest.Analysis, provenance pullrequest.Provenance) (bool, error) {
 	key := job.Ref.Key()
 	now := s.now()
 	published := false
@@ -93,7 +95,7 @@ WHERE id = ? AND status = 'running' AND lease_token = ? AND lease_until_unix > ?
 			return fmt.Errorf("complete analysis work: %w", err)
 		}
 		if n != 1 {
-			return app.ErrLeaseLost
+			return analyse.ErrLeaseLost
 		}
 		n, err = rowsAffected(tx.ExecContext(ctx, `
 UPDATE pull_requests SET published_identity = ?, unread = 1, archived = 0, activity_unix = ?
@@ -123,7 +125,7 @@ VALUES (?, ?, ?, ?, ?, ?, ?, ?) ON CONFLICT(identity) DO NOTHING`,
 }
 
 // Retry requeues the item after a technical failure; the attempt stays consumed.
-func (s *Store) Retry(ctx context.Context, job app.Job, notBefore time.Time, cause string) error {
+func (s *Store) Retry(ctx context.Context, job analyse.Job, notBefore time.Time, cause string) error {
 	n, err := rowsAffected(s.db.ExecContext(ctx, `
 UPDATE analysis_jobs SET status = 'queued', available_unix = ?, lease_until_unix = NULL, lease_token = NULL, last_error = ?
 WHERE id = ? AND status = 'running' AND lease_token = ? AND lease_until_unix > ?`, notBefore.Unix(), cause, job.ID, job.LeaseToken, s.now().Unix()))
@@ -131,14 +133,14 @@ WHERE id = ? AND status = 'running' AND lease_token = ? AND lease_until_unix > ?
 		return fmt.Errorf("schedule retry: %w", err)
 	}
 	if n != 1 {
-		return app.ErrLeaseLost
+		return analyse.ErrLeaseLost
 	}
 	return nil
 }
 
 // Release hands ownership back without consuming the attempt. Work whose
 // abonnement stopped meanwhile is cancelled instead of requeued.
-func (s *Store) Release(ctx context.Context, job app.Job) error {
+func (s *Store) Release(ctx context.Context, job analyse.Job) error {
 	n, err := rowsAffected(s.db.ExecContext(ctx, `
 UPDATE analysis_jobs SET
   status = CASE WHEN EXISTS (
@@ -151,14 +153,14 @@ WHERE id = ? AND status = 'running' AND lease_token = ?`, job.ID, job.LeaseToken
 		return fmt.Errorf("release analysis work: %w", err)
 	}
 	if n != 1 {
-		return app.ErrLeaseLost
+		return analyse.ErrLeaseLost
 	}
 	return nil
 }
 
 // Supersede retires a claimed item whose observed head moved on Forgejo
 // before its content could be fetched; the next poll schedules the new head.
-func (s *Store) Supersede(ctx context.Context, job app.Job, reason string) error {
+func (s *Store) Supersede(ctx context.Context, job analyse.Job, reason string) error {
 	n, err := rowsAffected(s.db.ExecContext(ctx, `
 UPDATE analysis_jobs SET status = 'superseded', attempts = attempts - 1, lease_until_unix = NULL, lease_token = NULL, last_error = ?
 WHERE id = ? AND status = 'running' AND lease_token = ?`, reason, job.ID, job.LeaseToken))
@@ -166,7 +168,7 @@ WHERE id = ? AND status = 'running' AND lease_token = ?`, reason, job.ID, job.Le
 		return fmt.Errorf("supersede analysis work: %w", err)
 	}
 	if n != 1 {
-		return app.ErrLeaseLost
+		return analyse.ErrLeaseLost
 	}
 	return nil
 }
@@ -185,7 +187,7 @@ func (s *Store) Replay(ctx context.Context, ref pullrequest.Ref, profile pullreq
 SELECT p.input_revision, p.head_sha, s.generation FROM pull_requests p
 JOIN subscriptions s ON s.repository = p.repository AND s.active = 1 WHERE p.pr_key = ?`, key).Scan(&revision, &headSHA, &generation)
 		if errors.Is(err, sql.ErrNoRows) {
-			return app.ErrNotFound
+			return collect.ErrNotFound
 		}
 		if err != nil {
 			return fmt.Errorf("read pull request: %w", err)
@@ -196,7 +198,7 @@ JOIN subscriptions s ON s.repository = p.repository AND s.active = 1 WHERE p.pr_
 			return fmt.Errorf("check replay identity: %w", err)
 		}
 		if existing > 0 {
-			return app.ErrReplayUnchanged
+			return timeline.ErrReplayUnchanged
 		}
 		if _, err := tx.ExecContext(ctx, `UPDATE pull_requests SET observed_identity = ? WHERE pr_key = ?`, string(identity), key); err != nil {
 			return fmt.Errorf("record replay identity: %w", err)

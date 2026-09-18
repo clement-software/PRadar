@@ -15,8 +15,10 @@ import (
 	"time"
 
 	"github.com/clement-software/PRadar/internal/adapter/sqlite"
-	"github.com/clement-software/PRadar/internal/app"
+	"github.com/clement-software/PRadar/internal/analyse"
+	"github.com/clement-software/PRadar/internal/collect"
 	"github.com/clement-software/PRadar/internal/pullrequest"
+	"github.com/clement-software/PRadar/internal/timeline"
 )
 
 var (
@@ -72,7 +74,7 @@ func (f *fakeForge) FetchPullRequest(_ context.Context, ref pullrequest.Ref) (pu
 			return observation, nil
 		}
 	}
-	return pullrequest.Observation{}, fmt.Errorf("%s: %w", ref.Key(), app.ErrNotFound)
+	return pullrequest.Observation{}, fmt.Errorf("%s: %w", ref.Key(), collect.ErrNotFound)
 }
 
 func (f *fakeForge) FetchDiff(context.Context, pullrequest.Ref) ([]byte, error) { return f.diff, nil }
@@ -88,10 +90,10 @@ type fakeAnalyzer struct {
 	mu       sync.Mutex
 	fail     error
 	block    chan struct{}
-	requests []app.AnalysisRequest
+	requests []analyse.AnalysisRequest
 }
 
-func (a *fakeAnalyzer) Analyse(ctx context.Context, request app.AnalysisRequest) (app.AnalysisResult, error) {
+func (a *fakeAnalyzer) Analyse(ctx context.Context, request analyse.AnalysisRequest) (analyse.AnalysisResult, error) {
 	a.mu.Lock()
 	a.requests = append(a.requests, request)
 	fail, block := a.fail, a.block
@@ -100,14 +102,14 @@ func (a *fakeAnalyzer) Analyse(ctx context.Context, request app.AnalysisRequest)
 		select {
 		case <-block:
 		case <-ctx.Done():
-			return app.AnalysisResult{}, ctx.Err()
+			return analyse.AnalysisResult{}, ctx.Err()
 		}
 	}
 	if fail != nil {
-		return app.AnalysisResult{}, fail
+		return analyse.AnalysisResult{}, fail
 	}
 	job := request.Job
-	return app.AnalysisResult{Analysis: pullrequest.Analysis{
+	return analyse.AnalysisResult{Analysis: pullrequest.Analysis{
 		SchemaVersion: pullrequest.SchemaVersion, PullRequest: job.Ref.Key(), HeadSHA: job.HeadSHA, PreviousHeadSHA: job.PreviousHeadSHA,
 		Status: pullrequest.AnalysisOK, Intent: "Controlled intent for " + job.HeadSHA, Importance: pullrequest.ImportanceMedium,
 		Risks: []string{"contract"}, Body: "```mermaid\nflowchart LR\n  A --> B\n```", ChangeSincePrevious: "controlled change",
@@ -154,9 +156,9 @@ type fixture struct {
 	forge     *fakeForge
 	analyzer  *fakeAnalyzer
 	workspace *fakeWorkspace
-	collector *app.Collector
-	worker    *app.Worker
-	timeline  *app.Timeline
+	collector *collect.Collector
+	worker    *analyse.Worker
+	timeline  *timeline.Reader
 	path      string
 }
 
@@ -193,16 +195,16 @@ func (f *fixture) wire() {
 		f.logs = &syncBuffer{}
 	}
 	log := slog.New(slog.NewJSONHandler(f.logs, nil))
-	f.collector = &app.Collector{Forge: f.forge, Store: store, Profile: profile, Debounce: 10 * time.Minute, Now: f.clock.Now, Log: log}
-	f.worker = &app.Worker{Store: store, Analyzer: f.analyzer, Workspace: f.workspace, Content: f.forge, Now: f.clock.Now,
-		Lease: time.Minute, Backoff: app.ExponentialBackoff(time.Minute), Log: log}
+	f.collector = &collect.Collector{Forge: f.forge, Store: store, Profile: profile, Debounce: 10 * time.Minute, Now: f.clock.Now, Log: log}
+	f.worker = &analyse.Worker{Store: store, Analyzer: f.analyzer, Workspace: f.workspace, Content: f.forge, Now: f.clock.Now,
+		Lease: time.Minute, Backoff: analyse.ExponentialBackoff(time.Minute), Log: log}
 	f.collector.Interrupt = f.worker.Interrupt
-	f.timeline = &app.Timeline{Store: store, Profile: profile, Now: f.clock.Now}
+	f.timeline = &timeline.Reader{Store: store, Profile: profile, Now: f.clock.Now}
 }
 
-func (f *fixture) subscribe(mode app.ImportMode, excluded ...string) app.Subscription {
+func (f *fixture) subscribe(mode collect.ImportMode, excluded ...string) collect.Subscription {
 	f.t.Helper()
-	subscription, err := f.collector.Subscribe(f.ctx, app.SubscribeRequest{Repository: repo, HTMLURL: "https://forge.test/" + repo, Import: mode, ExcludedAuthors: excluded})
+	subscription, err := f.collector.Subscribe(f.ctx, collect.SubscribeRequest{Repository: repo, HTMLURL: "https://forge.test/" + repo, Import: mode, ExcludedAuthors: excluded})
 	if err != nil {
 		f.t.Fatal(err)
 	}
@@ -222,7 +224,7 @@ func (f *fixture) drain() {
 	}
 }
 
-func (f *fixture) cards(filter app.Filter) []app.Card {
+func (f *fixture) cards(filter timeline.Filter) []timeline.Card {
 	f.t.Helper()
 	cards, err := f.timeline.Cards(f.ctx, filter)
 	if err != nil {
@@ -231,7 +233,7 @@ func (f *fixture) cards(filter app.Filter) []app.Card {
 	return cards
 }
 
-func (f *fixture) status() app.Status {
+func (f *fixture) status() timeline.Status {
 	f.t.Helper()
 	status, err := f.timeline.Status(f.ctx)
 	if err != nil {
@@ -243,15 +245,15 @@ func (f *fixture) status() app.Status {
 func TestControlledAnalysis_EndToEndAndRestart(t *testing.T) {
 	t.Parallel()
 	f := newFixture(t)
-	f.subscribe(app.ImportTen)
+	f.subscribe(collect.ImportTen)
 	if s := f.status(); s.Pending != 1 || s.LastSyncAt.IsZero() {
 		t.Fatalf("status after subscribe = %+v", s)
 	}
-	if err := f.runOne(); !errors.Is(err, app.ErrNoWork) {
+	if err := f.runOne(); !errors.Is(err, analyse.ErrNoWork) {
 		t.Fatalf("work must wait for the anti-rebond: %v", err)
 	}
 	f.drain()
-	cards := f.cards(app.Filter{})
+	cards := f.cards(timeline.Filter{})
 	if len(cards) != 1 || cards[0].Analysis.Intent != "Controlled intent for sha-1" || !cards[0].Unread {
 		t.Fatalf("cards = %+v", cards)
 	}
@@ -266,12 +268,12 @@ func TestControlledAnalysis_EndToEndAndRestart(t *testing.T) {
 	if err := f.collector.ReconcileAll(f.ctx); err != nil {
 		t.Fatal(err)
 	}
-	if err := f.runOne(); !errors.Is(err, app.ErrNoWork) {
+	if err := f.runOne(); !errors.Is(err, analyse.ErrNoWork) {
 		t.Fatalf("restart must not create duplicate work: %v", err)
 	}
 	detail, _ = f.timeline.Detail(f.ctx, ref)
-	if len(f.cards(app.Filter{})) != 1 || len(detail.History) != 1 {
-		t.Fatalf("restart duplicated visible state: cards=%d history=%d", len(f.cards(app.Filter{})), len(detail.History))
+	if len(f.cards(timeline.Filter{})) != 1 || len(detail.History) != 1 {
+		t.Fatalf("restart duplicated visible state: cards=%d history=%d", len(f.cards(timeline.Filter{})), len(detail.History))
 	}
 }
 
@@ -289,7 +291,7 @@ func TestSubscribe_ImportModesDraftsAndExcludedAuthors(t *testing.T) {
 	bot.Author = "renovate[bot]"
 	f.forge.set(append(many, draft, bot)...)
 
-	f.subscribe(app.ImportTen, "renovate[bot]")
+	f.subscribe(collect.ImportTen, "renovate[bot]")
 	if s := f.status(); s.Pending != 10 {
 		t.Fatalf("pending after ten import = %d", s.Pending)
 	}
@@ -300,10 +302,10 @@ func TestSubscribe_ImportModesDraftsAndExcludedAuthors(t *testing.T) {
 	if s := f.status(); s.Pending != 10 {
 		t.Fatalf("reconcile must not schedule seen versions: %d", s.Pending)
 	}
-	if _, err := f.store.GetDetail(f.ctx, draft.Ref); !errors.Is(err, app.ErrNotFound) {
+	if _, err := f.store.GetDetail(f.ctx, draft.Ref); !errors.Is(err, collect.ErrNotFound) {
 		t.Fatalf("draft must be ignored: %v", err)
 	}
-	if _, err := f.store.GetDetail(f.ctx, bot.Ref); !errors.Is(err, app.ErrNotFound) {
+	if _, err := f.store.GetDetail(f.ctx, bot.Ref); !errors.Is(err, collect.ErrNotFound) {
 		t.Fatalf("excluded author must be ignored: %v", err)
 	}
 	if err := f.collector.Unsubscribe(f.ctx, repo); err != nil {
@@ -312,7 +314,7 @@ func TestSubscribe_ImportModesDraftsAndExcludedAuthors(t *testing.T) {
 	if err := f.store.DeleteRepositoryData(f.ctx, repo); err != nil {
 		t.Fatal(err)
 	}
-	f.subscribe(app.ImportAll, "renovate[bot]")
+	f.subscribe(collect.ImportAll, "renovate[bot]")
 	if s := f.status(); s.Pending != 12 {
 		t.Fatalf("pending after all import = %d", s.Pending)
 	}
@@ -325,7 +327,7 @@ func TestSubscribe_ImportModesDraftsAndExcludedAuthors(t *testing.T) {
 	if err := f.collector.DeleteRepositoryData(f.ctx, repo, true); err != nil {
 		t.Fatal(err)
 	}
-	f.subscribe(app.ImportNone)
+	f.subscribe(collect.ImportNone)
 	if s := f.status(); s.Pending != 0 {
 		t.Fatalf("pending after none import = %d", s.Pending)
 	}
@@ -335,7 +337,7 @@ func TestSubscribe_InaccessibleRepositoryIsBlocked(t *testing.T) {
 	t.Parallel()
 	f := newFixture(t)
 	f.forge.checkErr = errors.New("forgejo: 401 unauthorised")
-	subscription := f.subscribe(app.ImportTen)
+	subscription := f.subscribe(collect.ImportTen)
 	if subscription.Active || subscription.BlockedReason == "" {
 		t.Fatalf("subscription = %+v", subscription)
 	}
@@ -344,7 +346,7 @@ func TestSubscribe_InaccessibleRepositoryIsBlocked(t *testing.T) {
 	}
 	f.forge.checkErr = nil
 	f.forge.listErr = errors.New("forgejo: 503")
-	f.subscribe(app.ImportTen)
+	f.subscribe(collect.ImportTen)
 	if s := f.status(); len(s.Blocked) != 1 || s.Blocked[0].BlockedReason != "forgejo: 503" {
 		t.Fatalf("listing failure must block visibly: %+v", s.Blocked)
 	}
@@ -353,7 +355,7 @@ func TestSubscribe_InaccessibleRepositoryIsBlocked(t *testing.T) {
 func TestReconcile_CloseMergeAndReopen(t *testing.T) {
 	t.Parallel()
 	f := newFixture(t)
-	f.subscribe(app.ImportTen)
+	f.subscribe(collect.ImportTen)
 	f.drain()
 	merged := observation(42, "sha-1", f.clock.Now().Add(time.Minute))
 	merged.State = pullrequest.StateMerged
@@ -361,11 +363,11 @@ func TestReconcile_CloseMergeAndReopen(t *testing.T) {
 	if err := f.collector.ReconcileAll(f.ctx); err != nil {
 		t.Fatal(err)
 	}
-	cards := f.cards(app.Filter{})
+	cards := f.cards(timeline.Filter{})
 	if len(cards) != 1 || cards[0].State != pullrequest.StateMerged {
 		t.Fatalf("merged carte = %+v", cards)
 	}
-	if err := f.runOne(); !errors.Is(err, app.ErrNoWork) {
+	if err := f.runOne(); !errors.Is(err, analyse.ErrNoWork) {
 		t.Fatalf("merge must not schedule: %v", err)
 	}
 	reopened := observation(42, "sha-1", f.clock.Now().Add(2*time.Minute))
@@ -381,15 +383,15 @@ func TestReconcile_CloseMergeAndReopen(t *testing.T) {
 func TestAnalysis_ThirdFailurePublishesUnavailable(t *testing.T) {
 	t.Parallel()
 	f := newFixture(t)
-	f.subscribe(app.ImportTen)
+	f.subscribe(collect.ImportTen)
 	f.analyzer.fail = errors.New("engine exploded")
 	f.clock.Advance(11 * time.Minute)
-	for attempt := 1; attempt <= app.MaxAttempts; attempt++ {
+	for attempt := 1; attempt <= analyse.MaxAttempts; attempt++ {
 		if err := f.runOne(); err != nil {
 			t.Fatalf("attempt %d: %v", attempt, err)
 		}
-		if attempt < app.MaxAttempts {
-			if err := f.runOne(); !errors.Is(err, app.ErrNoWork) {
+		if attempt < analyse.MaxAttempts {
+			if err := f.runOne(); !errors.Is(err, analyse.ErrNoWork) {
 				t.Fatalf("retry must wait for its increasing delay: %v", err)
 			}
 			if s := f.status(); s.Retrying != 1 {
@@ -398,7 +400,7 @@ func TestAnalysis_ThirdFailurePublishesUnavailable(t *testing.T) {
 			f.clock.Advance(time.Duration(1<<(attempt-1)) * time.Minute)
 		}
 	}
-	cards := f.cards(app.Filter{})
+	cards := f.cards(timeline.Filter{})
 	if len(cards) != 1 || cards[0].Analysis.Status != pullrequest.AnalysisUnavailable || cards[0].HTMLURL == "" {
 		t.Fatalf("unavailable carte = %+v", cards)
 	}
@@ -418,7 +420,7 @@ func TestAnalysis_ThirdFailurePublishesUnavailable(t *testing.T) {
 	if strings.Contains(logs, `"body"`) || strings.Contains(logs, observation(42, "", time.Time{}).Body) {
 		t.Error("logs must not contain the pull-request description")
 	}
-	if err := f.timeline.Replay(f.ctx, ref); !errors.Is(err, app.ErrReplayUnchanged) {
+	if err := f.timeline.Replay(f.ctx, ref); !errors.Is(err, timeline.ErrReplayUnchanged) {
 		t.Fatalf("replay with unchanged profile = %v", err)
 	}
 	f.timeline.Profile.PromptVersion = "p2"
@@ -429,7 +431,7 @@ func TestAnalysis_ThirdFailurePublishesUnavailable(t *testing.T) {
 	if err := f.runOne(); err != nil {
 		t.Fatal(err)
 	}
-	cards = f.cards(app.Filter{})
+	cards = f.cards(timeline.Filter{})
 	detail, _ = f.timeline.Detail(f.ctx, ref)
 	if cards[0].Analysis.Status != pullrequest.AnalysisOK || len(detail.History) != 2 {
 		t.Fatalf("replay must publish and keep the failure in history: %+v", detail.History)
@@ -439,7 +441,7 @@ func TestAnalysis_ThirdFailurePublishesUnavailable(t *testing.T) {
 func TestWorker_InvalidAnalysisIsATechnicalFailure(t *testing.T) {
 	t.Parallel()
 	f := newFixture(t)
-	f.subscribe(app.ImportTen)
+	f.subscribe(collect.ImportTen)
 	f.analyzer.fail = nil
 	f.forge.set(observation(42, "sha-1", f.clock.Now()))
 	f.clock.Advance(11 * time.Minute)
@@ -455,16 +457,16 @@ func TestWorker_InvalidAnalysisIsATechnicalFailure(t *testing.T) {
 
 type invalidAnalyzer struct{}
 
-func (invalidAnalyzer) Analyse(_ context.Context, request app.AnalysisRequest) (app.AnalysisResult, error) {
+func (invalidAnalyzer) Analyse(_ context.Context, request analyse.AnalysisRequest) (analyse.AnalysisResult, error) {
 	analysis := pullrequest.Unavailable(request.Job.Ref, "other-sha", "")
 	analysis.Status = pullrequest.AnalysisOK
-	return app.AnalysisResult{Analysis: analysis}, nil
+	return analyse.AnalysisResult{Analysis: analysis}, nil
 }
 
 func TestWorker_InterruptionReleasesWithoutConsumingAttempt(t *testing.T) {
 	t.Parallel()
 	f := newFixture(t)
-	f.subscribe(app.ImportTen)
+	f.subscribe(collect.ImportTen)
 	f.clock.Advance(11 * time.Minute)
 	f.analyzer.block = make(chan struct{})
 	done := make(chan error, 1)
@@ -473,10 +475,10 @@ func TestWorker_InterruptionReleasesWithoutConsumingAttempt(t *testing.T) {
 	if err := f.collector.Unsubscribe(f.ctx, repo); err != nil {
 		t.Fatal(err)
 	}
-	if err := <-done; !errors.Is(err, app.ErrInterrupted) {
+	if err := <-done; !errors.Is(err, analyse.ErrInterrupted) {
 		t.Fatalf("interrupted run = %v", err)
 	}
-	if err := f.runOne(); !errors.Is(err, app.ErrNoWork) {
+	if err := f.runOne(); !errors.Is(err, analyse.ErrNoWork) {
 		t.Fatalf("cancelled abonnement must leave no work: %v", err)
 	}
 	if len(f.workspace.cleaned) != 1 {
@@ -484,7 +486,7 @@ func TestWorker_InterruptionReleasesWithoutConsumingAttempt(t *testing.T) {
 	}
 
 	// Shutdown of the root context hands the work back and keeps the attempt.
-	f.subscribe(app.ImportTen)
+	f.subscribe(collect.ImportTen)
 	f.forge.set(observation(42, "sha-2", f.clock.Now()))
 	if err := f.collector.ReconcileAll(f.ctx); err != nil {
 		t.Fatal(err)
@@ -538,24 +540,24 @@ func waitFor(t *testing.T, condition func() bool) {
 func TestTimeline_Filters(t *testing.T) {
 	t.Parallel()
 	f := newFixture(t)
-	f.subscribe(app.ImportTen)
+	f.subscribe(collect.ImportTen)
 	f.drain()
 	if err := f.timeline.MarkRead(f.ctx, ref); err != nil {
 		t.Fatal(err)
 	}
 	cases := map[string]struct {
-		filter app.Filter
+		filter timeline.Filter
 		want   int
 	}{
-		"all":              {app.Filter{}, 1},
-		"unread only":      {app.Filter{UnreadOnly: true}, 0},
-		"repository":       {app.Filter{Repository: repo}, 1},
-		"other repository": {app.Filter{Repository: "acme/other"}, 0},
-		"state":            {app.Filter{State: pullrequest.StateOpen}, 1},
-		"importance":       {app.Filter{Importance: pullrequest.ImportanceMedium}, 1},
-		"other importance": {app.Filter{Importance: pullrequest.ImportanceHigh}, 0},
-		"risk":             {app.Filter{Risk: "contract"}, 1},
-		"other risk":       {app.Filter{Risk: "security"}, 0},
+		"all":              {timeline.Filter{}, 1},
+		"unread only":      {timeline.Filter{UnreadOnly: true}, 0},
+		"repository":       {timeline.Filter{Repository: repo}, 1},
+		"other repository": {timeline.Filter{Repository: "acme/other"}, 0},
+		"state":            {timeline.Filter{State: pullrequest.StateOpen}, 1},
+		"importance":       {timeline.Filter{Importance: pullrequest.ImportanceMedium}, 1},
+		"other importance": {timeline.Filter{Importance: pullrequest.ImportanceHigh}, 0},
+		"risk":             {timeline.Filter{Risk: "contract"}, 1},
+		"other risk":       {timeline.Filter{Risk: "security"}, 0},
 	}
 	for name, tc := range cases {
 		if got := len(f.cards(tc.filter)); got != tc.want {
@@ -565,7 +567,7 @@ func TestTimeline_Filters(t *testing.T) {
 	if err := f.timeline.Archive(f.ctx, ref); err != nil {
 		t.Fatal(err)
 	}
-	if len(f.cards(app.Filter{})) != 0 {
+	if len(f.cards(timeline.Filter{})) != 0 {
 		t.Fatal("archived carte must be hidden")
 	}
 }
@@ -573,7 +575,7 @@ func TestTimeline_Filters(t *testing.T) {
 func TestPoll_ReconcilesOnLaunchAndEveryTick(t *testing.T) {
 	t.Parallel()
 	f := newFixture(t)
-	f.subscribe(app.ImportNone)
+	f.subscribe(collect.ImportNone)
 	ticks := make(chan time.Time)
 	f.collector.Tick = func(time.Duration) <-chan time.Time { return ticks }
 	ctx, cancel := context.WithCancel(f.ctx)
@@ -591,7 +593,7 @@ func TestPoll_ReconcilesOnLaunchAndEveryTick(t *testing.T) {
 func TestReconcile_TitleBodyAndHeadChangesScheduleDistinctRevisions(t *testing.T) {
 	t.Parallel()
 	f := newFixture(t)
-	f.subscribe(app.ImportTen)
+	f.subscribe(collect.ImportTen)
 	f.drain()
 	base := observation(42, "sha-1", f.clock.Now())
 	changes := []func(o *pullrequest.Observation){
@@ -627,7 +629,7 @@ func TestReconcile_TitleBodyAndHeadChangesScheduleDistinctRevisions(t *testing.T
 	if err := f.collector.ReconcileAll(f.ctx); err != nil {
 		t.Fatal(err)
 	}
-	if cards := f.cards(app.Filter{}); cards[0].Analysis.HeadSHA != "sha-2" || f.status().Pending != 0 {
+	if cards := f.cards(timeline.Filter{}); cards[0].Analysis.HeadSHA != "sha-2" || f.status().Pending != 0 {
 		t.Fatalf("stale observation changed durable state: %+v", cards)
 	}
 }
@@ -635,7 +637,7 @@ func TestReconcile_TitleBodyAndHeadChangesScheduleDistinctRevisions(t *testing.T
 func TestWorker_SupersedesWhenHeadMovedBeforeFetch(t *testing.T) {
 	t.Parallel()
 	f := newFixture(t)
-	f.subscribe(app.ImportTen)
+	f.subscribe(collect.ImportTen)
 	f.clock.Advance(11 * time.Minute)
 	f.forge.set(observation(42, "sha-2", f.clock.Now())) // commit lands after the claim window opened
 	if err := f.runOne(); err != nil {
@@ -651,7 +653,7 @@ func TestWorker_SupersedesWhenHeadMovedBeforeFetch(t *testing.T) {
 		t.Fatal(err)
 	}
 	f.drain()
-	cards := f.cards(app.Filter{})
+	cards := f.cards(timeline.Filter{})
 	if len(cards) != 1 || cards[0].Analysis.HeadSHA != "sha-2" {
 		t.Fatalf("the moved head must be analysed by the next poll: %+v", cards)
 	}
@@ -670,10 +672,10 @@ func TestWorker_SupersedesWhenHeadMovedBeforeFetch(t *testing.T) {
 func TestSubscribe_RejectsUnknownImportModeBeforePersisting(t *testing.T) {
 	t.Parallel()
 	f := newFixture(t)
-	if _, err := f.collector.Subscribe(f.ctx, app.SubscribeRequest{Repository: repo, Import: "everything"}); err == nil {
+	if _, err := f.collector.Subscribe(f.ctx, collect.SubscribeRequest{Repository: repo, Import: "everything"}); err == nil {
 		t.Fatal("unknown import mode accepted")
 	}
-	if _, err := f.store.GetSubscription(f.ctx, repo); !errors.Is(err, app.ErrNotFound) {
+	if _, err := f.store.GetSubscription(f.ctx, repo); !errors.Is(err, collect.ErrNotFound) {
 		t.Fatalf("a rejected request must not persist an abonnement: %v", err)
 	}
 }
@@ -681,7 +683,7 @@ func TestSubscribe_RejectsUnknownImportModeBeforePersisting(t *testing.T) {
 func TestDeleteRepositoryData_InterruptsRunningAnalysis(t *testing.T) {
 	t.Parallel()
 	f := newFixture(t)
-	f.subscribe(app.ImportTen)
+	f.subscribe(collect.ImportTen)
 	f.clock.Advance(11 * time.Minute)
 	f.analyzer.block = make(chan struct{})
 	done := make(chan error, 1)
@@ -690,7 +692,7 @@ func TestDeleteRepositoryData_InterruptsRunningAnalysis(t *testing.T) {
 	if err := f.collector.DeleteRepositoryData(f.ctx, repo, true); err != nil {
 		t.Fatal(err)
 	}
-	if err := <-done; !errors.Is(err, app.ErrInterrupted) && !errors.Is(err, app.ErrLeaseLost) {
+	if err := <-done; !errors.Is(err, analyse.ErrInterrupted) && !errors.Is(err, analyse.ErrLeaseLost) {
 		t.Fatalf("deletion must cancel the running analysis: %v", err)
 	}
 	if len(f.workspace.cleaned) != 1 {
@@ -701,7 +703,7 @@ func TestDeleteRepositoryData_InterruptsRunningAnalysis(t *testing.T) {
 func TestReconcile_VanishedPullRequestDoesNotBlockAbonnement(t *testing.T) {
 	t.Parallel()
 	f := newFixture(t)
-	f.subscribe(app.ImportTen)
+	f.subscribe(collect.ImportTen)
 	f.forge.set() // the pull request was deleted on Forgejo: listing is empty, fetching it is a 404
 	if err := f.collector.ReconcileAll(f.ctx); err != nil {
 		t.Fatal(err)
@@ -714,9 +716,9 @@ func TestReconcile_VanishedPullRequestDoesNotBlockAbonnement(t *testing.T) {
 func TestWorker_RepeatedInterruptionsBecomeUnavailable(t *testing.T) {
 	t.Parallel()
 	f := newFixture(t)
-	f.subscribe(app.ImportTen)
+	f.subscribe(collect.ImportTen)
 	f.clock.Advance(11 * time.Minute)
-	for range app.MaxAttempts {
+	for range analyse.MaxAttempts {
 		if _, err := f.store.Claim(f.ctx, f.clock.Now().Add(time.Minute), "crashed-worker"); err != nil {
 			t.Fatal(err)
 		}
@@ -728,7 +730,7 @@ func TestWorker_RepeatedInterruptionsBecomeUnavailable(t *testing.T) {
 	if len(f.analyzer.requests) != 0 {
 		t.Fatal("no fourth invocation after three interrupted attempts")
 	}
-	cards := f.cards(app.Filter{})
+	cards := f.cards(timeline.Filter{})
 	if len(cards) != 1 || cards[0].Analysis.Status != pullrequest.AnalysisUnavailable {
 		t.Fatalf("exhausted attempts must publish analyse indisponible: %+v", cards)
 	}

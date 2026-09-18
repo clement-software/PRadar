@@ -8,13 +8,13 @@ import (
 	"fmt"
 	"time"
 
-	"github.com/clement-software/PRadar/internal/app"
+	"github.com/clement-software/PRadar/internal/collect"
 	"github.com/clement-software/PRadar/internal/pullrequest"
 )
 
 // PutSubscription inserts or reactivates an abonnement. The generation is
 // never reset so late work from a previous activation stays ineligible.
-func (s *Store) PutSubscription(ctx context.Context, subscription app.Subscription) error {
+func (s *Store) PutSubscription(ctx context.Context, subscription collect.Subscription) error {
 	_, err := s.db.ExecContext(ctx, `
 INSERT INTO subscriptions(repository, html_url, active, blocked_reason, excluded_authors, created_unix)
 VALUES (?, ?, ?, ?, ?, ?)
@@ -40,44 +40,44 @@ func nonNil(values []string) []string {
 
 const subscriptionColumns = `repository, html_url, generation, active, blocked_reason, excluded_authors, last_sync_unix`
 
-func scanSubscription(row interface{ Scan(...any) error }) (app.Subscription, error) {
+func scanSubscription(row interface{ Scan(...any) error }) (collect.Subscription, error) {
 	var (
-		subscription app.Subscription
+		subscription collect.Subscription
 		authors      string
 		lastSync     int64
 	)
 	if err := row.Scan(&subscription.Repository, &subscription.HTMLURL, &subscription.Generation, &subscription.Active,
 		&subscription.BlockedReason, &authors, &lastSync); err != nil {
-		return app.Subscription{}, err
+		return collect.Subscription{}, err
 	}
 	if err := json.Unmarshal([]byte(authors), &subscription.ExcludedAuthors); err != nil {
-		return app.Subscription{}, fmt.Errorf("decode excluded authors: %w", err)
+		return collect.Subscription{}, fmt.Errorf("decode excluded authors: %w", err)
 	}
 	subscription.LastSyncAt = fromUnix(lastSync)
 	return subscription, nil
 }
 
-// GetSubscription returns one abonnement or app.ErrNotFound.
-func (s *Store) GetSubscription(ctx context.Context, repository string) (app.Subscription, error) {
+// GetSubscription returns one abonnement or collect.ErrNotFound.
+func (s *Store) GetSubscription(ctx context.Context, repository string) (collect.Subscription, error) {
 	row := s.db.QueryRowContext(ctx, `SELECT `+subscriptionColumns+` FROM subscriptions WHERE repository = ?`, repository)
 	subscription, err := scanSubscription(row)
 	if errors.Is(err, sql.ErrNoRows) {
-		return app.Subscription{}, app.ErrNotFound
+		return collect.Subscription{}, collect.ErrNotFound
 	}
 	if err != nil {
-		return app.Subscription{}, fmt.Errorf("read abonnement: %w", err)
+		return collect.Subscription{}, fmt.Errorf("read abonnement: %w", err)
 	}
 	return subscription, nil
 }
 
 // ListSubscriptions returns every abonnement, active or not, by repository.
-func (s *Store) ListSubscriptions(ctx context.Context) ([]app.Subscription, error) {
+func (s *Store) ListSubscriptions(ctx context.Context) ([]collect.Subscription, error) {
 	rows, err := s.db.QueryContext(ctx, `SELECT `+subscriptionColumns+` FROM subscriptions ORDER BY repository`)
 	if err != nil {
 		return nil, fmt.Errorf("list abonnements: %w", err)
 	}
 	defer rows.Close()
-	var subscriptions []app.Subscription
+	var subscriptions []collect.Subscription
 	for rows.Next() {
 		subscription, err := scanSubscription(rows)
 		if err != nil {
@@ -109,7 +109,7 @@ func (s *Store) Unsubscribe(ctx context.Context, repository string) error {
 			return fmt.Errorf("deactivate abonnement: %w", err)
 		}
 		if n == 0 {
-			return app.ErrNotFound
+			return collect.ErrNotFound
 		}
 		if _, err := tx.ExecContext(ctx, `
 UPDATE analysis_jobs SET status = 'cancelled'
@@ -127,7 +127,7 @@ func (s *Store) DeleteRepositoryData(ctx context.Context, repository string) err
 		return fmt.Errorf("delete repository data: %w", err)
 	}
 	if n == 0 {
-		return app.ErrNotFound
+		return collect.ErrNotFound
 	}
 	return nil
 }
@@ -152,7 +152,7 @@ func (s *Store) ListLocallyOpen(ctx context.Context, repository string) ([]pullr
 
 // ObservePullRequest applies the lifecycle decision and its scheduling effect
 // in one transaction. Repeating an observation is a successful no-op.
-func (s *Store) ObservePullRequest(ctx context.Context, request app.ObservationRequest) (pullrequest.Decision, error) {
+func (s *Store) ObservePullRequest(ctx context.Context, request collect.ObservationRequest) (pullrequest.Decision, error) {
 	observation := request.Observation
 	key := observation.Ref.Key()
 	now := s.now()
@@ -211,7 +211,7 @@ func (s *Store) decide(ctx context.Context, q queryRower, observation pullreques
 	return pullrequest.Reconcile(stored, observation), nil
 }
 
-func (s *Store) schedule(ctx context.Context, tx *sql.Tx, request app.ObservationRequest, decision pullrequest.Decision, now time.Time) error {
+func (s *Store) schedule(ctx context.Context, tx *sql.Tx, request collect.ObservationRequest, decision pullrequest.Decision, now time.Time) error {
 	observation := request.Observation
 	key := observation.Ref.Key()
 	identity := pullrequest.IdentityOf(observation.Ref, decision.Revision, request.Profile)

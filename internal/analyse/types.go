@@ -1,8 +1,8 @@
-// Package analyze owns the single leased analysis worker: claiming due work,
+// Package analyse owns the single leased analysis worker: claiming due work,
 // materialising the pull-request content, invoking the engine, validating the
 // contract and completing or retrying. It declares the store, workspace and
 // analyzer interfaces it consumes.
-package analyze
+package analyse
 
 import (
 	"errors"

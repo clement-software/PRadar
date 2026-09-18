@@ -6,9 +6,10 @@ import (
 	"testing"
 	"time"
 
-	"github.com/clement-software/PRadar/internal/app"
+	"github.com/clement-software/PRadar/internal/collect"
 	"github.com/clement-software/PRadar/internal/evaluation"
 	"github.com/clement-software/PRadar/internal/pullrequest"
+	"github.com/clement-software/PRadar/internal/timeline"
 )
 
 func corpusManifest(head string) evaluation.Manifest {
@@ -35,9 +36,9 @@ func TestEvaluator_FreezeScoreAndReport(t *testing.T) {
 	t.Parallel()
 	f := newFixture(t)
 	f.forge.set(observation(42, "sha-1111111", f.clock.Now()))
-	f.subscribe(app.ImportTen)
+	f.subscribe(collect.ImportTen)
 	f.drain()
-	evaluator := &app.Evaluator{Store: f.store, Read: f.store, Profile: profile, Now: f.clock.Now}
+	evaluator := &timeline.Evaluator{Store: f.store, Read: f.store, Profile: profile, Now: f.clock.Now}
 	if _, err := evaluator.Report(f.ctx); err == nil {
 		t.Fatal("report before freezing must fail")
 	}
@@ -51,7 +52,7 @@ func TestEvaluator_FreezeScoreAndReport(t *testing.T) {
 	if again, err := evaluator.Freeze(f.ctx, corpusManifest("sha-1111111")); err != nil || again != id {
 		t.Fatalf("refreezing the same manifest = %s, %v", again, err)
 	}
-	card := app.Scorecard{Elapsed: 45 * time.Second, Answers: evaluation.Answers{Intent: true, Structure: true, Risks: true, ReviewNeeded: true}, Useful: true}
+	card := timeline.Scorecard{Elapsed: 45 * time.Second, Answers: evaluation.Answers{Intent: true, Structure: true, Risks: true, ReviewNeeded: true}, Useful: true}
 	if err := evaluator.Score(f.ctx, pullrequest.Ref{Repository: repo, Number: 999}, card); err == nil {
 		t.Fatal("scoring outside the corpus accepted")
 	}
