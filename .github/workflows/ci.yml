@@ -36,4 +36,14 @@ jobs:
         with:
           go-version-file: go.mod
       - run: go build ./...
-      - run: go test -race ./internal/adapter/desktop/
+      - run: go test -race ./internal/adapter/desktop/ ./tools/...
+      # Packaging must keep working; signing needs credentials a pull request
+      # does not have, so the job stops at the unsigned bundle.
+      - run: make app VERSION=ci
+      - name: check the bundle
+        run: |
+          set -euo pipefail
+          plutil -lint build/PRadar.app/Contents/Info.plist
+          test -x build/PRadar.app/Contents/MacOS/pradar
+          test -f build/PRadar.app/Contents/Resources/PRadar.icns
+          test "$(build/PRadar.app/Contents/MacOS/pradar version)" = "pradar ci"

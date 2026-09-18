@@ -33,6 +33,7 @@ type visualizer struct {
 	worker    *analyse.Worker
 	coll      *collect.Collector
 	evaluator *timeline.Evaluator
+	server    *ui.Server
 }
 
 func start(t *testing.T) *visualizer { return startWith(t, nil) }
@@ -62,7 +63,7 @@ func startWith(t *testing.T, openExternal func(string) error) *visualizer {
 	go func() { _ = server.Serve(ctx, "", func(url string) { ready <- url }) }()
 	base := <-ready
 	client := &http.Client{CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }}
-	return &visualizer{t: t, client: client, base: strings.TrimSuffix(base, "/"), store: store, worker: worker, coll: coll, evaluator: evaluator}
+	return &visualizer{t: t, client: client, base: strings.TrimSuffix(base, "/"), store: store, worker: worker, coll: coll, evaluator: evaluator, server: server}
 }
 
 type noWorkspace struct{}
@@ -483,5 +484,25 @@ func TestVisualizer_HandsExternalLinksToTheBrowserWhenAWindowHostsThePage(t *tes
 	case got := <-opened:
 		t.Fatalf("a refused link must not reach the browser: %q", got)
 	default:
+	}
+}
+
+func TestVisualizer_GuidesTheFirstRunAndShowsTheVersion(t *testing.T) {
+	t.Parallel()
+	v := start(t)
+	v.server.Version = "1.4.2"
+	_, page := v.get("/")
+	if !strings.Contains(page, "Aucun dépôt suivi") || !strings.Contains(page, "URL Forgejo du dépôt") {
+		t.Errorf("a first run must say what to do next:\n%s", page)
+	}
+	if !strings.Contains(page, "PRadar 1.4.2") || !strings.Contains(page, "aucune télémétrie") {
+		t.Error("the interface must show its version and that nothing is sent anywhere")
+	}
+	if _, err := v.coll.Subscribe(t.Context(), collect.SubscribeRequest{Repository: controlled.Repository,
+		HTMLURL: "https://forge.example/controlled/demo", AuthoriseEngine: true}); err != nil {
+		t.Fatal(err)
+	}
+	if _, page := v.get("/"); strings.Contains(page, "Aucun dépôt suivi") {
+		t.Error("the first-run hint must disappear once a repository is followed")
 	}
 }

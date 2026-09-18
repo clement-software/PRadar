@@ -74,6 +74,17 @@ temporaires, dans un délai borné par `--shutdown-grace`.
 Le serveur n'écoute que sur 127.0.0.1 ; son URL est imprimée au démarrage.
 Les abonnements s'ajoutent depuis la timeline en collant l'URL Forgejo du dépôt.
 
+## Construire l'application
+
+```sh
+make app      # build/PRadar.app, prêt à lancer
+make verify   # portes locales complètes
+```
+
+La signature, la notarisation et la procédure de publication sont décrites dans
+`docs/release.md`. Les identifiants restent chez vous : le dépôt n'en contient
+aucun.
+
 ## Workflow de référence
 
 ```text

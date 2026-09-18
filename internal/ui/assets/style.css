@@ -138,3 +138,5 @@ legend { padding: 0 .4rem; color: var(--muted); font-size: .9rem; }
 table.report { border-collapse: collapse; width: 100%; }
 table.report th, table.report td { text-align: left; padding: .35rem .5rem; border-bottom: 1px solid var(--hairline); }
 .visually-hidden { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap; }
+.foot-bar { max-width: 68rem; margin: 0 auto; padding: 0 1.5rem 2rem; }
+.first-run { background: var(--surface); border: 2px solid var(--line); border-radius: var(--radius); padding: 1rem 1.25rem; }

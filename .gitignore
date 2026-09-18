@@ -5,3 +5,4 @@ ui-model
 
 # Local verification artefacts
 coverage.out
+build/
