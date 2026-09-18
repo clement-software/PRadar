@@ -38,7 +38,7 @@
 
 {{define "status"}}<ul class="status" aria-label="État de la collecte">
   <li>Synchronisation <strong>{{if .LastSyncAt.IsZero}}jamais{{else}}{{when .LastSyncAt}}{{end}}</strong></li>
-  <li>En attente <strong>{{.Pending}}</strong></li>
+  <li>En attente <strong>{{.Pending}}</strong>{{if not .NextAnalysisAt.IsZero}} · prochaine analyse {{when .NextAnalysisAt}}{{end}}</li>
   <li>En cours <strong>{{.Running}}</strong></li>
   <li>Nouvelles tentatives <strong>{{.Retrying}}</strong></li>
   <li>Indisponibles <strong>{{.Unavailable}}</strong></li>

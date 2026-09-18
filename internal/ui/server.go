@@ -60,6 +60,7 @@ func (s *Server) handler() http.Handler {
 		"safeURL":  safeURL,
 		"linkOut":  s.linkOut,
 		"prLink":   prLink,
+		"add":      func(a, b int) int { return a + b },
 	}).ParseFS(content, "templates/*.html"))
 	assets, _ := fs.Sub(content, "assets")
 
@@ -133,6 +134,7 @@ type page struct {
 	Risks       []string
 	States      []string
 	Importances []string
+	Pending     []timeline.PendingVersion
 	Engine      string // the engine configuration a user authorises
 	Version     string // the application version
 	Ref         pullrequest.Ref
@@ -195,6 +197,10 @@ func (s *Server) timeline(w http.ResponseWriter, r *http.Request) {
 		if filter.Matches(card) {
 			data.Cards = append(data.Cards, card)
 		}
+	}
+	if data.Pending, err = s.Reader.Pending(r.Context()); err != nil {
+		s.fail(w, err)
+		return
 	}
 	s.render(w, "timeline.html", data)
 }

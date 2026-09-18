@@ -59,6 +59,12 @@ go run ./cmd/pradar corpus candidates --instance https://forge.example owner/rep
 #   garder 20 éléments (2 ou 3 dépôts), remplir "category" (code|ci|infra) et "reason", vérifier "size" et "authorship"
 go run ./cmd/pradar corpus freeze manifest.json
 
+Une version observée attend dix minutes avant d'être analysée : c'est
+l'anti-rebond, qui regroupe une rafale de commits pour n'analyser que la
+dernière version. Pendant ce temps la timeline liste ces pull requests sous
+« En attente d'analyse », avec l'heure prévue et leur lien Forgejo ; elles
+n'ont pas encore de carte. `--debounce` règle ce délai.
+
 Un abonnement n'est actif que si vous autorisez explicitement le moteur
 configuré à lire le contenu du dépôt. Changer de moteur ou de modèle suspend la
 collecte jusqu'à une nouvelle autorisation, sans perdre l'historique. Les

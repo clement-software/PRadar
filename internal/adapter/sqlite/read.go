@@ -137,6 +137,13 @@ FROM analysis_jobs`, now).Scan(&status.Pending, &status.Running, &status.Retryin
 	if err != nil {
 		return timeline.Status{}, fmt.Errorf("count work: %w", err)
 	}
+	var nextAnalysis sql.NullInt64
+	if err := s.db.QueryRowContext(ctx, `SELECT MIN(available_unix) FROM analysis_jobs WHERE status = 'queued'`).Scan(&nextAnalysis); err != nil {
+		return timeline.Status{}, fmt.Errorf("read the next analysis time: %w", err)
+	}
+	if nextAnalysis.Valid {
+		status.NextAnalysisAt = fromUnix(nextAnalysis.Int64)
+	}
 	subscriptions, err := s.ListSubscriptions(ctx)
 	if err != nil {
 		return timeline.Status{}, err
@@ -156,6 +163,40 @@ FROM analysis_jobs`, now).Scan(&status.Pending, &status.Running, &status.Retryin
 		}
 	}
 	return status, nil
+}
+
+// PendingVersions lists the versions waiting for analysis, soonest first.
+func (s *Store) PendingVersions(ctx context.Context) ([]timeline.PendingVersion, error) {
+	rows, err := s.db.QueryContext(ctx, `
+SELECT p.repository, p.number, p.title, p.author, p.html_url, j.head_sha, j.available_unix, j.attempts, j.status, j.lease_until_unix
+FROM analysis_jobs j
+JOIN pull_requests p ON p.pr_key = j.pr_key
+JOIN subscriptions s ON s.repository = p.repository AND s.active = 1 AND s.generation = j.generation
+WHERE j.status IN ('queued', 'running')
+ORDER BY j.available_unix, j.id`)
+	if err != nil {
+		return nil, fmt.Errorf("list pending versions: %w", err)
+	}
+	defer rows.Close()
+	now := s.now().Unix()
+	pending := []timeline.PendingVersion{}
+	for rows.Next() {
+		var (
+			version    timeline.PendingVersion
+			due        int64
+			state      string
+			leaseUntil sql.NullInt64
+		)
+		if err := rows.Scan(&version.Ref.Repository, &version.Ref.Number, &version.Title, &version.Author,
+			&version.HTMLURL, &version.HeadSHA, &due, &version.Attempt, &state, &leaseUntil); err != nil {
+			return nil, fmt.Errorf("scan pending version: %w", err)
+		}
+		version.DueAt = fromUnix(due)
+		version.Running = state == "running" && leaseUntil.Valid && leaseUntil.Int64 > now
+		version.Retrying = state == "queued" && version.Attempt > 0
+		pending = append(pending, version)
+	}
+	return pending, rows.Err()
 }
 
 // UsageRecords lists every analysis measurement, oldest first.

@@ -872,3 +872,55 @@ func TestPoll_ASleepCostsOneCatchUp(t *testing.T) {
 // settle gives a racing goroutine time to do the thing a test asserts it will
 // not do.
 func settle() { time.Sleep(150 * time.Millisecond) }
+
+func TestPending_ShowsRunningAndRetryingVersions(t *testing.T) {
+	t.Parallel()
+	f := newFixture(t)
+	f.subscribe(collect.ImportTen)
+	f.clock.Advance(11 * time.Minute)
+
+	// A technical failure schedules another attempt: the waiting list must say
+	// so rather than look like an ordinary wait.
+	f.analyzer.fail = errors.New("engine exploded")
+	if err := f.runOne(); err != nil {
+		t.Fatal(err)
+	}
+	pending, err := f.timeline.Pending(f.ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(pending) != 1 || !pending[0].Retrying || pending[0].Attempt != 1 || pending[0].Running {
+		t.Fatalf("a retried version = %+v", pending)
+	}
+	if pending[0].Title == "" || pending[0].HTMLURL == "" || pending[0].DueAt.IsZero() {
+		t.Fatalf("a waiting version must carry what the reader needs: %+v", pending[0])
+	}
+
+	// While an analysis runs, the same version says it is running.
+	f.clock.Advance(2 * time.Minute)
+	f.analyzer.fail = nil
+	f.analyzer.block = make(chan struct{})
+	done := make(chan error, 1)
+	go func() { done <- f.runOne() }()
+	waitFor(t, func() bool { f.analyzer.mu.Lock(); defer f.analyzer.mu.Unlock(); return len(f.analyzer.requests) == 2 })
+	pending, err = f.timeline.Pending(f.ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(pending) != 1 || !pending[0].Running {
+		t.Fatalf("a running version = %+v", pending)
+	}
+	close(f.analyzer.block)
+	if err := <-done; err != nil {
+		t.Fatal(err)
+	}
+
+	// Published: nothing is waiting any more.
+	pending, err = f.timeline.Pending(f.ctx)
+	if err != nil || len(pending) != 0 {
+		t.Fatalf("pending after publication = %+v, %v", pending, err)
+	}
+	if status, _ := f.timeline.Status(f.ctx); !status.NextAnalysisAt.IsZero() {
+		t.Fatalf("no analysis is due, so the next time must be zero: %v", status.NextAnalysisAt)
+	}
+}

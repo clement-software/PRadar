@@ -15,6 +15,8 @@ type ReadModel interface {
 	Status(ctx context.Context) (Status, error)
 	// UsageRecords returns every analysis measurement, oldest first.
 	UsageRecords(ctx context.Context) ([]UsageRecord, error)
+	// PendingVersions lists the versions waiting for analysis, soonest first.
+	PendingVersions(ctx context.Context) ([]PendingVersion, error)
 	MarkRead(ctx context.Context, ref pullrequest.Ref) error
 	Archive(ctx context.Context, ref pullrequest.Ref) error
 	Replay(ctx context.Context, ref pullrequest.Ref, profile pullrequest.Profile, notBefore time.Time) error
@@ -53,6 +55,12 @@ func (f Filter) Matches(card Card) bool {
 // Detail returns the full reading view of one pull request.
 func (t *Reader) Detail(ctx context.Context, ref pullrequest.Ref) (Detail, error) {
 	return t.Store.GetDetail(ctx, ref)
+}
+
+// Pending lists the versions waiting for analysis, so waiting is visible
+// rather than inferred from a counter.
+func (t *Reader) Pending(ctx context.Context) ([]PendingVersion, error) {
+	return t.Store.PendingVersions(ctx)
 }
 
 // Usage returns the local usage measurements for a manual export. Nothing is
