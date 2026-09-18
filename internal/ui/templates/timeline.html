@@ -32,7 +32,7 @@
 <section aria-labelledby="subscriptions-title" class="subscriptions">
   <h2 id="subscriptions-title">Abonnements</h2>
   <ul>
-  {{range .Status.Subscriptions}}
+  {{range .Status.Repositories}}
     <li>
       <span>{{.Repository}}{{if not .Active}} (arrêté){{end}}{{if .BlockedReason}} — bloqué : {{.BlockedReason}}{{end}}</span>
       {{if .Active}}<form method="post" action="/subscriptions/{{.Repository}}"><input type="hidden" name="action" value="unsubscribe"><button type="submit">Se désabonner</button></form>{{end}}

@@ -25,10 +25,12 @@ import (
 	"github.com/clement-software/PRadar/internal/adapter/keychain"
 	"github.com/clement-software/PRadar/internal/adapter/sqlite"
 	"github.com/clement-software/PRadar/internal/adapter/workspace"
-	"github.com/clement-software/PRadar/internal/app"
+	"github.com/clement-software/PRadar/internal/analyse"
+	"github.com/clement-software/PRadar/internal/collect"
 	"github.com/clement-software/PRadar/internal/controlled"
 	"github.com/clement-software/PRadar/internal/evaluation"
 	"github.com/clement-software/PRadar/internal/pullrequest"
+	"github.com/clement-software/PRadar/internal/timeline"
 	"github.com/clement-software/PRadar/internal/ui"
 )
 
@@ -88,7 +90,7 @@ func runCorpus(args []string) error {
 		return err
 	}
 	defer store.Close()
-	evaluator := &app.Evaluator{Store: store, Read: store, Now: time.Now}
+	evaluator := &timeline.Evaluator{Store: store, Read: store, Now: time.Now}
 	id, err := evaluator.Freeze(ctx, manifest)
 	if err != nil {
 		return err
@@ -163,7 +165,7 @@ func runSmoke(args []string) error {
 	log := slog.New(slog.NewJSONHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelWarn}))
 
 	var (
-		forge app.Forge
+		forge collect.Forge
 		ref   pullrequest.Ref
 	)
 	if *controlledForge {
@@ -198,7 +200,7 @@ func runSmoke(args []string) error {
 	if err != nil {
 		return err
 	}
-	smoke := &app.Smoke{
+	smoke := &analyse.Smoke{
 		Forge: forge, Workspace: root, Now: time.Now, Log: log,
 		Analyzer: &claudecli.Analyzer{Executable: claudePath, Model: *model, Timeout: *timeout,
 			MaxOutput: 16 << 20, MaxTurns: *maxTurns, MaxBudgetUSD: *maxBudget, Env: claudecli.MinimalEnv()},
@@ -301,8 +303,8 @@ func runDemonstrator(args []string) error {
 
 	// External boundaries: the controlled substitutes, or the real instance with its Keychain token.
 	var (
-		forge    app.Forge
-		analyzer app.Analyzer
+		forge    collect.Forge
+		analyzer analyse.Analyzer
 		profile  pullrequest.Profile
 		instance forgejo.Instance
 	)
@@ -349,19 +351,19 @@ func runDemonstrator(args []string) error {
 		return fmt.Errorf("scavenge workspaces: %w", err)
 	}
 
-	collector := &app.Collector{Forge: forge, Store: store, Profile: profile, Debounce: cfg.debounce, Now: now, Log: log}
-	worker := &app.Worker{Store: store, Analyzer: analyzer, Workspace: root, Content: forge, Now: now, Lease: cfg.lease,
-		Backoff: app.ExponentialBackoff(time.Minute), Log: log}
+	collector := &collect.Collector{Forge: forge, Store: store, Profile: profile, Debounce: cfg.debounce, Now: now, Log: log}
+	worker := &analyse.Worker{Store: store, Analyzer: analyzer, Workspace: root, Content: forge, Now: now, Lease: cfg.lease,
+		Backoff: analyse.ExponentialBackoff(time.Minute), Log: log}
 	collector.Interrupt = worker.Interrupt
-	timeline := &app.Timeline{Store: store, Profile: profile, Now: now}
-	evaluator := &app.Evaluator{Store: store, Read: store, Profile: profile, Presentation: ui.PresentationVersion, Now: now}
+	reader := &timeline.Reader{Store: store, Profile: profile, Now: now}
+	evaluator := &timeline.Evaluator{Store: store, Read: store, Profile: profile, Presentation: ui.PresentationVersion, Now: now}
 	if cfg.controlled {
-		if _, err := collector.Subscribe(ctx, app.SubscribeRequest{Repository: controlled.Repository, HTMLURL: "https://forge.example/" + controlled.Repository, Import: app.ImportTen}); err != nil {
+		if _, err := collector.Subscribe(ctx, collect.SubscribeRequest{Repository: controlled.Repository, HTMLURL: "https://forge.example/" + controlled.Repository, Import: collect.ImportTen}); err != nil {
 			return err
 		}
 	}
 
-	server := &ui.Server{Timeline: timeline, Collector: collector, Evaluator: evaluator, Log: log, ParseRepositoryURL: instance.ParseRepositoryURL}
+	server := &ui.Server{Reader: reader, Collector: collector, Evaluator: evaluator, Log: log, ParseRepositoryURL: instance.ParseRepositoryURL}
 	var wg sync.WaitGroup
 	wg.Go(func() { collector.Poll(ctx, cfg.pollInterval) })
 	wg.Go(func() { worker.Run(ctx, 2*time.Second) })

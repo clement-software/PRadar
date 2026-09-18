@@ -23,16 +23,18 @@ CLI analyzer.
 | Package | Owns | Depends on |
 | --- | --- | --- |
 | `internal/pullrequest` | Identity, input revision, analysis identity, `pradar.analysis.v1`, the pure `Reconcile` lifecycle decision | standard library only |
-| `internal/evaluation` | Corpus manifest validation and content id, per-item score, deterministic threshold report (16/20 useful under one minute, zero critical error; a changed profile or head invalidates earlier scores) | `internal/pullrequest` |
-| `internal/app` | Abonnements and reconciliation (`Collector`), the single leased worker (`Worker`), reading use cases (`Timeline`), corpus freezing and scoring (`Evaluator`); declares the `Forge`, `CollectionStore`, `WorkStore`, `Workspace`, `Analyzer` and `ReadModel` interfaces it consumes | `internal/pullrequest` |
-| `internal/adapter/sqlite` | Schema, observation+scheduling transaction, atomic leased claim, completion with latest-only publication, read model, user state | `database/sql`, `modernc.org/sqlite`, `internal/app` |
-| `internal/adapter/claudecli` | Restricted `claude -p` invocation (`--restricted`, read-only tools, `dontAsk`, no session persistence, bounded turns/budget/timeout/output), embedded pinned HumanLayer `show-me` plugin (`showme/PIN`), envelope and `pradar.analysis.v1` decoding | `os/exec`, `internal/app` |
+| `internal/collect` | Abonnements, polling reconciliation, durable anti-rebond; declares the `Forge` and `CollectionStore` interfaces it consumes | `internal/pullrequest` |
+| `internal/analyse` | The single leased worker, workspace materialisation, engine invocation, validation, retry and the live smoke check; declares the `WorkStore`, `Workspace`, `Analyzer` and `ContentFetcher` interfaces | `internal/pullrequest` |
+| `internal/timeline` | Timeline and detail queries, read, archive and replay, corpus freezing and scoring; declares the `ReadModel` and `EvaluationStore` interfaces | `internal/pullrequest`, `internal/evaluation` |
+| `internal/evaluation` | Corpus manifest validation and content id, per-item score, deterministic threshold report | `internal/pullrequest` |
+| `internal/adapter/sqlite` | Schema, observation and scheduling transaction, atomic leased claim, completion with latest-only publication, read model, user state, corpus and scores | `database/sql`, `modernc.org/sqlite`, the three use-case packages |
+| `internal/adapter/forgejo` | Instance and repository URL validation, read-only bounded HTTP client, self-redacting `Token` | `net/http`, `internal/pullrequest` |
+| `internal/adapter/claudecli` | Restricted `claude -p` invocation, pinned `show-me` guidance, runtime verification of the granted surface, stream decoding and contract validation | `os/exec`, `internal/analyse` |
+| `internal/adapter/keychain` | Token lookup and storage through `/usr/bin/security` | `os/exec`, `internal/adapter/forgejo` |
 | `internal/adapter/workspace` | Owned temporary root, safe materialisation, cleanup and startup scavenging | `os` |
-| `internal/adapter/forgejo` | Instance and repository URL validation, read-only bounded HTTP client (auth header, same-origin redirects only, transient retries, pagination, payload mapping, diff bound), self-redacting `Token` | `net/http`, `internal/pullrequest` |
-| `internal/adapter/keychain` | Token lookup and storage through `/usr/bin/security`; the token never enters SQLite, logs or exports | `os/exec`, `internal/adapter/forgejo` |
-| `internal/controlled` | Deterministic Forgejo and analyzer substitutes for `--controlled` | `internal/evaluation` | Corpus manifest validation and content id, per-item score, deterministic threshold report (16/20 useful under one minute, zero critical error; a changed profile or head invalidates earlier scores) | `internal/pullrequest` |
-| `internal/app` |
-| `internal/ui` | Loopback HTTP visualizer, safe Markdown rendering, embedded assets | `net/http`, `html/template`, `goldmark`, `internal/app` |
+| `internal/controlled` | Deterministic forge and analyzer substitutes for `--controlled` | `internal/collect`, `internal/analyse` |
+| `internal/ui` | Loopback visualizer, safe Markdown rendering, embedded assets | `net/http`, `html/template`, `goldmark`, `internal/collect`, `internal/timeline` |
+| `internal/apptest` | Cross-boundary application tests over a real temporary database with controlled substitutes | the packages under test |
 
 `internal/architecture_test.go` rejects outward imports from the policy
 packages. Application tests use a real temporary SQLite file and controlled

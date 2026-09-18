@@ -9,8 +9,10 @@ import (
 	"time"
 
 	"github.com/clement-software/PRadar/internal/adapter/sqlite"
-	"github.com/clement-software/PRadar/internal/app"
+	"github.com/clement-software/PRadar/internal/analyse"
+	"github.com/clement-software/PRadar/internal/collect"
 	"github.com/clement-software/PRadar/internal/pullrequest"
+	"github.com/clement-software/PRadar/internal/timeline"
 )
 
 type clock struct {
@@ -49,7 +51,7 @@ func open(t *testing.T) *harness {
 	t.Helper()
 	h := &harness{t: t, ctx: t.Context(), clock: newClock(), path: t.TempDir() + "/pradar.sqlite"}
 	h.reopen()
-	if err := h.store.PutSubscription(h.ctx, app.Subscription{Repository: ref.Repository, HTMLURL: "https://forge.test/acme/widgets", Active: true}); err != nil {
+	if err := h.store.PutSubscription(h.ctx, collect.Subscription{Repository: ref.Repository, HTMLURL: "https://forge.test/acme/widgets", Active: true}); err != nil {
 		t.Fatal(err)
 	}
 	return h
@@ -72,7 +74,7 @@ func (h *harness) reopen() {
 
 func (h *harness) observe(head string, schedule bool) pullrequest.Decision {
 	h.t.Helper()
-	decision, err := h.store.ObservePullRequest(h.ctx, app.ObservationRequest{
+	decision, err := h.store.ObservePullRequest(h.ctx, collect.ObservationRequest{
 		Observation: pullrequest.Observation{Ref: ref, Title: "Title", Body: "Body", Author: "alice", State: pullrequest.StateOpen,
 			HeadSHA: head, HTMLURL: "https://forge.test/acme/widgets/pulls/42", UpdatedAt: h.clock.Now()},
 		Profile: profile, Schedule: schedule, NotBefore: h.clock.Now().Add(10 * time.Minute),
@@ -86,7 +88,7 @@ func (h *harness) observe(head string, schedule bool) pullrequest.Decision {
 func (h *harness) observeState(state pullrequest.State) {
 	h.t.Helper()
 	h.clock.Advance(time.Second)
-	if _, err := h.store.ObservePullRequest(h.ctx, app.ObservationRequest{
+	if _, err := h.store.ObservePullRequest(h.ctx, collect.ObservationRequest{
 		Observation: pullrequest.Observation{Ref: ref, Title: "Title", Body: "Body", State: state, HeadSHA: "x", UpdatedAt: h.clock.Now()},
 		Profile:     profile, Schedule: true, NotBefore: h.clock.Now(),
 	}); err != nil {
@@ -94,7 +96,7 @@ func (h *harness) observeState(state pullrequest.State) {
 	}
 }
 
-func (h *harness) claim(token string) app.Job {
+func (h *harness) claim(token string) analyse.Job {
 	h.t.Helper()
 	job, err := h.store.Claim(h.ctx, h.clock.Now().Add(time.Minute), token)
 	if err != nil {
@@ -105,12 +107,12 @@ func (h *harness) claim(token string) app.Job {
 
 func (h *harness) noWork() {
 	h.t.Helper()
-	if _, err := h.store.Claim(h.ctx, h.clock.Now().Add(time.Minute), "probe"); !errors.Is(err, app.ErrNoWork) {
+	if _, err := h.store.Claim(h.ctx, h.clock.Now().Add(time.Minute), "probe"); !errors.Is(err, analyse.ErrNoWork) {
 		h.t.Fatalf("Claim() = %v, want ErrNoWork", err)
 	}
 }
 
-func okAnalysis(job app.Job) pullrequest.Analysis {
+func okAnalysis(job analyse.Job) pullrequest.Analysis {
 	return pullrequest.Analysis{
 		SchemaVersion: pullrequest.SchemaVersion, PullRequest: job.Ref.Key(), HeadSHA: job.HeadSHA, PreviousHeadSHA: job.PreviousHeadSHA,
 		Status: pullrequest.AnalysisOK, Intent: "intent", Importance: pullrequest.ImportanceLow, Risks: []string{"security"},
@@ -118,7 +120,7 @@ func okAnalysis(job app.Job) pullrequest.Analysis {
 	}
 }
 
-func (h *harness) complete(job app.Job) bool {
+func (h *harness) complete(job analyse.Job) bool {
 	h.t.Helper()
 	published, err := h.store.Complete(h.ctx, job, okAnalysis(job), pullrequest.Provenance{Profile: job.Profile, Attempt: job.Attempt})
 	if err != nil {
@@ -127,7 +129,7 @@ func (h *harness) complete(job app.Job) bool {
 	return published
 }
 
-func (h *harness) detail() app.Detail {
+func (h *harness) detail() timeline.Detail {
 	h.t.Helper()
 	detail, err := h.store.GetDetail(h.ctx, ref)
 	if err != nil {
@@ -136,7 +138,7 @@ func (h *harness) detail() app.Detail {
 	return detail
 }
 
-func (h *harness) cards() []app.Card {
+func (h *harness) cards() []timeline.Card {
 	h.t.Helper()
 	cards, err := h.store.ListCards(h.ctx)
 	if err != nil {
@@ -145,7 +147,7 @@ func (h *harness) cards() []app.Card {
 	return cards
 }
 
-func (h *harness) status() app.Status {
+func (h *harness) status() timeline.Status {
 	h.t.Helper()
 	status, err := h.store.Status(h.ctx)
 	if err != nil {
@@ -222,7 +224,7 @@ func TestClaimAnalysis_GrantsSingleLease(t *testing.T) {
 				mu.Lock()
 				wins++
 				mu.Unlock()
-			case !errors.Is(err, app.ErrNoWork):
+			case !errors.Is(err, analyse.ErrNoWork):
 				t.Errorf("Claim: %v", err)
 			}
 		})
@@ -244,10 +246,10 @@ func TestComplete_RejectsLostLease(t *testing.T) {
 	if recovered.Attempt != 2 {
 		t.Fatalf("recovered attempt = %d, want 2", recovered.Attempt)
 	}
-	if _, err := h.store.Complete(h.ctx, late, okAnalysis(late), pullrequest.Provenance{}); !errors.Is(err, app.ErrLeaseLost) {
+	if _, err := h.store.Complete(h.ctx, late, okAnalysis(late), pullrequest.Provenance{}); !errors.Is(err, analyse.ErrLeaseLost) {
 		t.Fatalf("late Complete = %v, want ErrLeaseLost", err)
 	}
-	if err := h.store.Retry(h.ctx, late, h.clock.Now(), "x"); !errors.Is(err, app.ErrLeaseLost) {
+	if err := h.store.Retry(h.ctx, late, h.clock.Now(), "x"); !errors.Is(err, analyse.ErrLeaseLost) {
 		t.Fatalf("late Retry = %v, want ErrLeaseLost", err)
 	}
 	if !h.complete(recovered) {
@@ -342,7 +344,7 @@ func TestArchivedPR_ReappearsAfterLatestAnalysis(t *testing.T) {
 	if len(cards) != 1 || !cards[0].Unread || cards[0].Analysis.HeadSHA != "sha-2" {
 		t.Fatalf("reappeared cards = %+v", cards)
 	}
-	if err := h.store.MarkRead(h.ctx, pullrequest.Ref{Repository: "acme/widgets", Number: 99}); !errors.Is(err, app.ErrNotVisible) {
+	if err := h.store.MarkRead(h.ctx, pullrequest.Ref{Repository: "acme/widgets", Number: 99}); !errors.Is(err, timeline.ErrNotVisible) {
 		t.Fatalf("MarkRead(unknown) = %v", err)
 	}
 }
@@ -388,7 +390,7 @@ func TestUnsubscribe_InvalidatesOutstandingWork(t *testing.T) {
 	h.clock.Advance(11 * time.Minute)
 	running := h.claim("w")
 	other := pullrequest.Ref{Repository: "acme/widgets", Number: 43}
-	if _, err := h.store.ObservePullRequest(h.ctx, app.ObservationRequest{
+	if _, err := h.store.ObservePullRequest(h.ctx, collect.ObservationRequest{
 		Observation: pullrequest.Observation{Ref: other, State: pullrequest.StateOpen, HeadSHA: "sha-9", UpdatedAt: h.clock.Now()},
 		Profile:     profile, Schedule: true, NotBefore: h.clock.Now(),
 	}); err != nil {
@@ -405,13 +407,13 @@ func TestUnsubscribe_InvalidatesOutstandingWork(t *testing.T) {
 	if len(detail.History) != 1 || detail.HasCard {
 		t.Fatalf("history retained, carte absent: %+v", detail)
 	}
-	if err := h.store.Release(h.ctx, running); !errors.Is(err, app.ErrLeaseLost) {
+	if err := h.store.Release(h.ctx, running); !errors.Is(err, analyse.ErrLeaseLost) {
 		t.Fatalf("Release after completion = %v", err)
 	}
 	if err := h.store.DeleteRepositoryData(h.ctx, ref.Repository); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := h.store.GetDetail(h.ctx, ref); !errors.Is(err, app.ErrNotFound) {
+	if _, err := h.store.GetDetail(h.ctx, ref); !errors.Is(err, collect.ErrNotFound) {
 		t.Fatalf("detail after deletion = %v", err)
 	}
 }
@@ -436,7 +438,7 @@ func TestReplay_RequiresChangedIdentityAndKeepsHistory(t *testing.T) {
 	h.observe("sha-1", true)
 	h.clock.Advance(11 * time.Minute)
 	h.complete(h.claim("w"))
-	if err := h.store.Replay(h.ctx, ref, profile, h.clock.Now()); !errors.Is(err, app.ErrReplayUnchanged) {
+	if err := h.store.Replay(h.ctx, ref, profile, h.clock.Now()); !errors.Is(err, timeline.ErrReplayUnchanged) {
 		t.Fatalf("Replay(same profile) = %v, want ErrReplayUnchanged", err)
 	}
 	changed := profile
@@ -503,7 +505,7 @@ func TestObserve_ConcurrentSchedulingCreatesOneWorkItem(t *testing.T) {
 	var wg sync.WaitGroup
 	for range 8 {
 		wg.Go(func() {
-			if _, err := h.store.ObservePullRequest(h.ctx, app.ObservationRequest{
+			if _, err := h.store.ObservePullRequest(h.ctx, collect.ObservationRequest{
 				Observation: pullrequest.Observation{Ref: ref, Title: "Title", Body: "Body", State: pullrequest.StateOpen, HeadSHA: "sha-1", UpdatedAt: h.clock.Now()},
 				Profile:     profile, Schedule: true, NotBefore: h.clock.Now().Add(10 * time.Minute),
 			}); err != nil {
@@ -593,10 +595,10 @@ func TestComplete_RequiresUnexpiredLease(t *testing.T) {
 	h.clock.Advance(11 * time.Minute)
 	job := h.claim("slow")
 	h.clock.Advance(2 * time.Minute) // lease expired, nobody reclaimed yet
-	if _, err := h.store.Complete(h.ctx, job, okAnalysis(job), pullrequest.Provenance{}); !errors.Is(err, app.ErrLeaseLost) {
+	if _, err := h.store.Complete(h.ctx, job, okAnalysis(job), pullrequest.Provenance{}); !errors.Is(err, analyse.ErrLeaseLost) {
 		t.Fatalf("Complete after expiry = %v, want ErrLeaseLost", err)
 	}
-	if err := h.store.Retry(h.ctx, job, h.clock.Now(), "x"); !errors.Is(err, app.ErrLeaseLost) {
+	if err := h.store.Retry(h.ctx, job, h.clock.Now(), "x"); !errors.Is(err, analyse.ErrLeaseLost) {
 		t.Fatalf("Retry after expiry = %v, want ErrLeaseLost", err)
 	}
 	if len(h.cards()) != 0 {
@@ -654,7 +656,7 @@ func TestObserve_RevertedRevisionRepublishesItsAnalysis(t *testing.T) {
 
 func (h *harness) observeTitled(head, title string) pullrequest.Decision {
 	h.t.Helper()
-	decision, err := h.store.ObservePullRequest(h.ctx, app.ObservationRequest{
+	decision, err := h.store.ObservePullRequest(h.ctx, collect.ObservationRequest{
 		Observation: pullrequest.Observation{Ref: ref, Title: title, Body: "Body", Author: "alice", State: pullrequest.StateOpen,
 			HeadSHA: head, HTMLURL: "https://forge.test/acme/widgets/pulls/42", UpdatedAt: h.clock.Now()},
 		Profile: profile, Schedule: true, NotBefore: h.clock.Now().Add(10 * time.Minute),

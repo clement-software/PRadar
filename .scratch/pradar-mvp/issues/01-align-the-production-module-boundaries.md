@@ -7,20 +7,20 @@ without changing observable behaviour.
 
 **Blocked by:** None (can start immediately).
 
-**Status:** ready-for-agent
+**Status:** done
 
-- [ ] Collection, analysis and reading each own their use cases and the
+- [x] Collection, analysis and reading each own their use cases and the
   interfaces they consume, as named by the target architecture.
-- [ ] Types shared by more than one boundary live where their owner is
+- [x] Types shared by more than one boundary live where their owner is
   explicit, and no package exists only to hold shared structs.
-- [ ] Adapters implement the interfaces of the packages that consume them and
+- [x] Adapters implement the interfaces of the packages that consume them and
   keep returning concrete types.
-- [ ] The architecture test rejects any dependency from domain or application
+- [x] The architecture test rejects any dependency from domain or application
   policy towards SQL, HTTP, process, Keychain, UI or adapter code, and names
   the new boundaries.
-- [ ] Every behaviour test that existed before the move still passes, asserting
+- [x] Every behaviour test that existed before the move still passes, asserting
   the same observable outcomes.
-- [ ] The move happens by expand and contract: the new form lands, callers
+- [x] The move happens by expand and contract: the new form lands, callers
   migrate, then the old form is removed.
-- [ ] No behaviour, schema or contract changes in this ticket.
-- [ ] `make verify` passes.
+- [x] No behaviour, schema or contract changes in this ticket.
+- [x] `make verify` passes.

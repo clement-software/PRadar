@@ -21,7 +21,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/clement-software/PRadar/internal/app"
+	"github.com/clement-software/PRadar/internal/analyse"
 	"github.com/clement-software/PRadar/internal/pullrequest"
 )
 
@@ -66,7 +66,7 @@ const schema = `{"type":"object","additionalProperties":false,"properties":{` +
 	`"body":{"type":"string"},"change_since_previous":{"type":"string"}},` +
 	`"required":["schema_version","pull_request","head_sha","status","intent","importance","risks","body","change_since_previous"]}`
 
-// Analyzer is the app.Analyzer implementation backed by the Claude CLI.
+// Analyzer is the analyse.Analyzer implementation backed by the Claude CLI.
 type Analyzer struct {
 	// Executable is the claude binary; PrefixArgs precede the fixed
 	// arguments and exist for the deterministic test substitute.
@@ -255,14 +255,14 @@ func decodeStream(payload []byte) (event, surface, error) {
 }
 
 // Analyse runs one bounded invocation inside the job's workspace.
-func (a *Analyzer) Analyse(ctx context.Context, request app.AnalysisRequest) (app.AnalysisResult, error) {
+func (a *Analyzer) Analyse(ctx context.Context, request analyse.AnalysisRequest) (analyse.AnalysisResult, error) {
 	if a.Executable == "" || a.Model == "" {
-		return app.AnalysisResult{}, errors.New("claude executable and model are required")
+		return analyse.AnalysisResult{}, errors.New("claude executable and model are required")
 	}
 	job := request.Job
 	input, err := json.Marshal(stdinPayload{PullRequest: job.Ref.Key(), HeadSHA: job.HeadSHA, PreviousHeadSHA: job.PreviousHeadSHA, Files: []string{"PULL_REQUEST.md", "changes.diff"}})
 	if err != nil {
-		return app.AnalysisResult{}, err
+		return analyse.AnalysisResult{}, err
 	}
 	runCtx, cancel := context.WithTimeoutCause(ctx, a.Timeout, errors.New("claude invocation exceeded the configured timeout"))
 	defer cancel()
@@ -276,40 +276,40 @@ func (a *Analyzer) Analyse(ctx context.Context, request app.AnalysisRequest) (ap
 	cmd.Stdout, cmd.Stderr = stdout, stderr
 	err = cmd.Run()
 	if stdout.overflow {
-		return app.AnalysisResult{}, fmt.Errorf("claude output exceeded %d bytes", a.MaxOutput)
+		return analyse.AnalysisResult{}, fmt.Errorf("claude output exceeded %d bytes", a.MaxOutput)
 	}
 	if cause := context.Cause(runCtx); cause != nil && !errors.Is(cause, context.Canceled) {
-		return app.AnalysisResult{}, cause
+		return analyse.AnalysisResult{}, cause
 	}
 	if ctx.Err() != nil {
-		return app.AnalysisResult{}, ctx.Err()
+		return analyse.AnalysisResult{}, ctx.Err()
 	}
 	if err != nil {
-		return app.AnalysisResult{}, fmt.Errorf("claude exited with an error: %w: %s", err, strings.TrimSpace(stderr.String()))
+		return analyse.AnalysisResult{}, fmt.Errorf("claude exited with an error: %w: %s", err, strings.TrimSpace(stderr.String()))
 	}
 	env, granted, err := decodeStream(stdout.Bytes())
 	if err != nil {
-		return app.AnalysisResult{}, err
+		return analyse.AnalysisResult{}, err
 	}
 	if env.Subtype != "success" || env.IsError {
-		return app.AnalysisResult{}, fmt.Errorf("claude reported %s: %s", cmp.Or(env.Subtype, "no subtype"), truncate(env.Result, 200))
+		return analyse.AnalysisResult{}, fmt.Errorf("claude reported %s: %s", cmp.Or(env.Subtype, "no subtype"), truncate(env.Result, 200))
 	}
 	if len(env.StructuredOutput) == 0 || string(env.StructuredOutput) == "null" {
-		return app.AnalysisResult{}, errors.New("claude returned no structured output")
+		return analyse.AnalysisResult{}, errors.New("claude returned no structured output")
 	}
 	var analysis pullrequest.Analysis
 	decoder := json.NewDecoder(bytes.NewReader(env.StructuredOutput))
 	decoder.DisallowUnknownFields()
 	if err := decoder.Decode(&analysis); err != nil {
-		return app.AnalysisResult{}, fmt.Errorf("decode pradar.analysis.v1: %w", err)
+		return analyse.AnalysisResult{}, fmt.Errorf("decode pradar.analysis.v1: %w", err)
 	}
 	if err := analysis.Validate(job.Ref, job.HeadSHA, job.PreviousHeadSHA); err != nil {
-		return app.AnalysisResult{}, err
+		return analyse.AnalysisResult{}, err
 	}
 	usage := map[string]any{"total_cost_usd": env.TotalCostUSD, "duration_ms": env.DurationMS, "num_turns": env.NumTurns,
 		"tools_used": granted.toolsUsed, "permission_denials": granted.denials}
 	maps.Copy(usage, env.Usage)
-	return app.AnalysisResult{Analysis: analysis, Usage: usage}, nil
+	return analyse.AnalysisResult{Analysis: analysis, Usage: usage}, nil
 }
 
 func truncate(s string, n int) string {

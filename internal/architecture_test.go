@@ -20,7 +20,7 @@ func TestArchitecture_DependenciesPointInward(t *testing.T) {
 		"github.com/clement-software/PRadar/internal/ui",
 		"modernc.org/", "github.com/mattn/", "github.com/yuin/",
 	}
-	for _, policy := range []string{"pullrequest", "app", "evaluation"} {
+	for _, policy := range []string{"pullrequest", "collect", "analyse", "timeline", "evaluation"} {
 		pkg, err := build.ImportDir(filepath.Join(root, policy), 0)
 		if err != nil {
 			t.Fatalf("import %s: %v", policy, err)

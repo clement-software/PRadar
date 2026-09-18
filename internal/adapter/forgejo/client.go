@@ -14,7 +14,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/clement-software/PRadar/internal/app"
+	"github.com/clement-software/PRadar/internal/collect"
 	"github.com/clement-software/PRadar/internal/pullrequest"
 )
 
@@ -63,9 +63,9 @@ func (e *APIError) Error() string {
 	return fmt.Sprintf("forgejo returned HTTP %d", e.Status)
 }
 
-// Is lets callers match a missing repository or pull request with app.ErrNotFound.
+// Is lets callers match a missing repository or pull request with collect.ErrNotFound.
 func (e *APIError) Is(target error) bool {
-	return target == app.ErrNotFound && e.Status == http.StatusNotFound
+	return target == collect.ErrNotFound && e.Status == http.StatusNotFound
 }
 
 // Transient reports whether the failure may succeed on retry.

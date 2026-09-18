@@ -1,4 +1,4 @@
-package app
+package analyse
 
 import (
 	"context"
@@ -13,6 +13,12 @@ import (
 
 	"github.com/clement-software/PRadar/internal/pullrequest"
 )
+
+// SmokeForge is the read-only forge surface a smoke run needs.
+type SmokeForge interface {
+	ContentFetcher
+	CheckRepository(ctx context.Context, repository string) error
+}
 
 // SmokeStep is one checked stage of the live smoke run.
 type SmokeStep struct {
@@ -43,7 +49,7 @@ func (r SmokeReport) Passed() bool {
 // engine, contract validation, workspace cleanup and rendering. It writes
 // nothing to the database and is never part of the automated test suite.
 type Smoke struct {
-	Forge     Forge
+	Forge     SmokeForge
 	Workspace Workspace
 	Analyzer  Analyzer
 	Profile   pullrequest.Profile

@@ -8,7 +8,8 @@ import (
 	"fmt"
 	"time"
 
-	"github.com/clement-software/PRadar/internal/app"
+	"github.com/clement-software/PRadar/internal/analyse"
+	"github.com/clement-software/PRadar/internal/collect"
 	"github.com/clement-software/PRadar/internal/pullrequest"
 )
 
@@ -40,7 +41,7 @@ func (f Forge) ListOpenPullRequests(context.Context, string) ([]pullrequest.Obse
 // FetchPullRequest returns the fixture pull request.
 func (f Forge) FetchPullRequest(_ context.Context, r pullrequest.Ref) (pullrequest.Observation, error) {
 	if r != ref {
-		return pullrequest.Observation{}, fmt.Errorf("%s: %w", r.Key(), app.ErrNotFound)
+		return pullrequest.Observation{}, fmt.Errorf("%s: %w", r.Key(), collect.ErrNotFound)
 	}
 	return f.observation(), nil
 }
@@ -54,9 +55,9 @@ func (Forge) FetchDiff(context.Context, pullrequest.Ref) ([]byte, error) {
 type Analyzer struct{}
 
 // Analyse builds the controlled analysis for the claimed job.
-func (Analyzer) Analyse(_ context.Context, request app.AnalysisRequest) (app.AnalysisResult, error) {
+func (Analyzer) Analyse(_ context.Context, request analyse.AnalysisRequest) (analyse.AnalysisResult, error) {
 	job := request.Job
-	return app.AnalysisResult{Analysis: pullrequest.Analysis{
+	return analyse.AnalysisResult{Analysis: pullrequest.Analysis{
 		SchemaVersion: pullrequest.SchemaVersion, PullRequest: job.Ref.Key(), HeadSHA: job.HeadSHA, PreviousHeadSHA: job.PreviousHeadSHA,
 		Status: pullrequest.AnalysisOK, Intent: "Make transient Forgejo failures recover automatically instead of blocking the abonnement.",
 		Importance: pullrequest.ImportanceMedium, Risks: []string{"retry-storm"},

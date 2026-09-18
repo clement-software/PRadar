@@ -13,10 +13,12 @@ import (
 	"time"
 
 	"github.com/clement-software/PRadar/internal/adapter/sqlite"
-	"github.com/clement-software/PRadar/internal/app"
+	"github.com/clement-software/PRadar/internal/analyse"
+	"github.com/clement-software/PRadar/internal/collect"
 	"github.com/clement-software/PRadar/internal/controlled"
 	"github.com/clement-software/PRadar/internal/evaluation"
 	"github.com/clement-software/PRadar/internal/pullrequest"
+	"github.com/clement-software/PRadar/internal/timeline"
 	"github.com/clement-software/PRadar/internal/ui"
 )
 
@@ -27,9 +29,9 @@ type visualizer struct {
 	client    *http.Client
 	base      string
 	store     *sqlite.Store
-	worker    *app.Worker
-	coll      *app.Collector
-	evaluator *app.Evaluator
+	worker    *analyse.Worker
+	coll      *collect.Collector
+	evaluator *timeline.Evaluator
 }
 
 func start(t *testing.T) *visualizer {
@@ -42,11 +44,11 @@ func start(t *testing.T) *visualizer {
 	t.Cleanup(func() { _ = store.Close() })
 	log := slog.New(slog.NewTextHandler(io.Discard, nil))
 	forge := controlled.Forge{Now: time.Now}
-	coll := &app.Collector{Forge: forge, Store: store, Profile: profile, Now: time.Now, Log: log}
-	worker := &app.Worker{Store: store, Analyzer: controlled.Analyzer{}, Workspace: noWorkspace{}, Content: forge, Now: time.Now,
-		Lease: time.Minute, Backoff: app.ExponentialBackoff(time.Minute), Log: log}
-	evaluator := &app.Evaluator{Store: store, Read: store, Profile: profile, Presentation: ui.PresentationVersion, Now: time.Now}
-	server := &ui.Server{Timeline: &app.Timeline{Store: store, Profile: profile, Now: time.Now}, Collector: coll, Evaluator: evaluator, Log: log,
+	coll := &collect.Collector{Forge: forge, Store: store, Profile: profile, Now: time.Now, Log: log}
+	worker := &analyse.Worker{Store: store, Analyzer: controlled.Analyzer{}, Workspace: noWorkspace{}, Content: forge, Now: time.Now,
+		Lease: time.Minute, Backoff: analyse.ExponentialBackoff(time.Minute), Log: log}
+	evaluator := &timeline.Evaluator{Store: store, Read: store, Profile: profile, Presentation: ui.PresentationVersion, Now: time.Now}
+	server := &ui.Server{Reader: &timeline.Reader{Store: store, Profile: profile, Now: time.Now}, Collector: coll, Evaluator: evaluator, Log: log,
 		ParseRepositoryURL: func(raw string) (string, string, error) { return controlled.Repository, raw, nil }}
 	ctx, cancel := context.WithCancel(ctx)
 	t.Cleanup(cancel)
@@ -94,7 +96,7 @@ func TestVisualizer_ShowsCarteAndDetailAfterControlledAnalysis(t *testing.T) {
 	if status, body := v.get("/"); status != http.StatusOK || !strings.Contains(body, "Aucune carte") {
 		t.Fatalf("empty timeline: %d %s", status, body)
 	}
-	if _, err := v.coll.Subscribe(t.Context(), app.SubscribeRequest{Repository: controlled.Repository, HTMLURL: "https://forge.example/controlled/demo"}); err != nil {
+	if _, err := v.coll.Subscribe(t.Context(), collect.SubscribeRequest{Repository: controlled.Repository, HTMLURL: "https://forge.example/controlled/demo"}); err != nil {
 		t.Fatal(err)
 	}
 	if err := v.worker.RunOne(t.Context()); err != nil {
@@ -153,7 +155,7 @@ func TestVisualizer_RefusesNonLoopbackAddress(t *testing.T) {
 func hostilePR(t *testing.T, v *visualizer, number int64, head string, at time.Time) {
 	t.Helper()
 	ref := pullrequest.Ref{Repository: controlled.Repository, Number: number}
-	if _, err := v.store.ObservePullRequest(t.Context(), app.ObservationRequest{
+	if _, err := v.store.ObservePullRequest(t.Context(), collect.ObservationRequest{
 		Observation: pullrequest.Observation{Ref: ref, Title: `<script>alert("title")</script> PR ` + head, Body: "b", Author: "<b>mallory</b>",
 			State: pullrequest.StateOpen, HeadSHA: head, HTMLURL: "javascript:alert(1)", UpdatedAt: at},
 		Profile: profile, Schedule: true, NotBefore: at,
@@ -177,7 +179,7 @@ func hostilePR(t *testing.T, v *visualizer, number int64, head string, at time.T
 func TestVisualizer_OrdersCartesAndKeepsHostileValuesInert(t *testing.T) {
 	t.Parallel()
 	v := start(t)
-	if err := v.store.PutSubscription(t.Context(), app.Subscription{Repository: controlled.Repository, HTMLURL: "https://forge.example/controlled/demo", Active: true}); err != nil {
+	if err := v.store.PutSubscription(t.Context(), collect.Subscription{Repository: controlled.Repository, HTMLURL: "https://forge.example/controlled/demo", Active: true}); err != nil {
 		t.Fatal(err)
 	}
 	hostilePR(t, v, 7, "older", time.Now().Add(-time.Hour))
@@ -285,7 +287,7 @@ func TestVisualizer_EvaluationScorecardAndReport(t *testing.T) {
 	if status, body := v.get("/evaluation"); status != http.StatusOK || !strings.Contains(body, "Aucun corpus") || strings.Contains(body, "Verdict :") {
 		t.Fatalf("evaluation without corpus must show the hint and no empty report: %d %s", status, body)
 	}
-	if _, err := v.coll.Subscribe(t.Context(), app.SubscribeRequest{Repository: controlled.Repository, HTMLURL: "https://forge.example/controlled/demo"}); err != nil {
+	if _, err := v.coll.Subscribe(t.Context(), collect.SubscribeRequest{Repository: controlled.Repository, HTMLURL: "https://forge.example/controlled/demo"}); err != nil {
 		t.Fatal(err)
 	}
 	if err := v.worker.RunOne(t.Context()); err != nil {

@@ -19,9 +19,10 @@ import (
 	"strings"
 	"time"
 
-	"github.com/clement-software/PRadar/internal/app"
+	"github.com/clement-software/PRadar/internal/collect"
 	"github.com/clement-software/PRadar/internal/evaluation"
 	"github.com/clement-software/PRadar/internal/pullrequest"
+	"github.com/clement-software/PRadar/internal/timeline"
 )
 
 //go:embed templates/*.html assets/*
@@ -33,9 +34,9 @@ const PresentationVersion = "visualizer-v1"
 
 // Server serves the visualizer on loopback only.
 type Server struct {
-	Timeline  *app.Timeline
-	Collector *app.Collector
-	Evaluator *app.Evaluator
+	Reader    *timeline.Reader
+	Collector *collect.Collector
+	Evaluator *timeline.Evaluator
 	Log       *slog.Logger
 	// ParseRepositoryURL maps a Forgejo repository URL to "owner/name" and its canonical URL.
 	ParseRepositoryURL func(raw string) (repository, htmlURL string, err error)
@@ -111,10 +112,10 @@ func (s *Server) Serve(ctx context.Context, addr string, ready func(url string))
 
 type page struct {
 	Title       string
-	Status      app.Status
-	Cards       []app.Card
-	Filter      app.Filter
-	Detail      app.Detail
+	Status      timeline.Status
+	Cards       []timeline.Card
+	Filter      timeline.Filter
+	Detail      timeline.Detail
 	Notice      string
 	Problem     string
 	Repos       []string
@@ -122,7 +123,7 @@ type page struct {
 	States      []string
 	Importances []string
 	Ref         pullrequest.Ref
-	Progress    app.Progress
+	Progress    timeline.Progress
 	CorpusItem  *evaluation.Item
 	Score       *evaluation.Score
 }
@@ -137,9 +138,9 @@ func (s *Server) render(w http.ResponseWriter, name string, data page) {
 func (s *Server) fail(w http.ResponseWriter, err error) {
 	status := http.StatusInternalServerError
 	switch {
-	case errors.Is(err, app.ErrNotFound):
+	case errors.Is(err, collect.ErrNotFound):
 		status = http.StatusNotFound
-	case errors.Is(err, app.ErrNotVisible), errors.Is(err, app.ErrReplayUnchanged):
+	case errors.Is(err, timeline.ErrNotVisible), errors.Is(err, timeline.ErrReplayUnchanged):
 		status = http.StatusConflict
 	}
 	http.Error(w, err.Error(), status)
@@ -147,16 +148,16 @@ func (s *Server) fail(w http.ResponseWriter, err error) {
 
 func (s *Server) timeline(w http.ResponseWriter, r *http.Request) {
 	q := r.URL.Query()
-	filter := app.Filter{
+	filter := timeline.Filter{
 		UnreadOnly: q.Get("unread") == "1", Repository: q.Get("repository"),
 		State: pullrequest.State(q.Get("state")), Importance: pullrequest.Importance(q.Get("importance")), Risk: q.Get("risk"),
 	}
-	status, err := s.Timeline.Status(r.Context())
+	status, err := s.Reader.Status(r.Context())
 	if err != nil {
 		s.fail(w, err)
 		return
 	}
-	all, err := s.Timeline.Cards(r.Context(), app.Filter{})
+	all, err := s.Reader.Cards(r.Context(), timeline.Filter{})
 	if err != nil {
 		s.fail(w, err)
 		return
@@ -208,12 +209,12 @@ func (s *Server) detail(w http.ResponseWriter, r *http.Request) {
 		http.NotFound(w, r)
 		return
 	}
-	detail, err := s.Timeline.Detail(r.Context(), ref)
+	detail, err := s.Reader.Detail(r.Context(), ref)
 	if err != nil {
 		s.fail(w, err)
 		return
 	}
-	status, err := s.Timeline.Status(r.Context())
+	status, err := s.Reader.Status(r.Context())
 	if err != nil {
 		s.fail(w, err)
 		return
@@ -234,7 +235,7 @@ func (s *Server) detail(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) evaluation(w http.ResponseWriter, r *http.Request) {
-	status, err := s.Timeline.Status(r.Context())
+	status, err := s.Reader.Status(r.Context())
 	if err != nil {
 		s.fail(w, err)
 		return
@@ -242,7 +243,7 @@ func (s *Server) evaluation(w http.ResponseWriter, r *http.Request) {
 	data := page{Title: "Évaluation", Status: status, Notice: r.URL.Query().Get("notice"), Problem: r.URL.Query().Get("problem")}
 	progress, err := s.Evaluator.Report(r.Context())
 	switch {
-	case errors.Is(err, app.ErrNoCorpus):
+	case errors.Is(err, timeline.ErrNoCorpus):
 		data.Problem = "Aucun corpus figé : lancez `pradar corpus freeze <manifest.json>`."
 	case err != nil:
 		s.fail(w, err)
@@ -272,7 +273,7 @@ func (s *Server) score(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	elapsedMS, _ := strconv.ParseInt(r.FormValue("elapsed_ms"), 10, 64)
-	card := app.Scorecard{
+	card := timeline.Scorecard{
 		Elapsed: time.Duration(elapsedMS) * time.Millisecond,
 		Answers: evaluation.Answers{
 			Intent: r.FormValue("intent") == "on", Structure: r.FormValue("structure") == "on",
@@ -292,11 +293,11 @@ func (s *Server) action(w http.ResponseWriter, r *http.Request) {
 	var notice string
 	switch r.FormValue("action") {
 	case "read":
-		err, notice = s.Timeline.MarkRead(r.Context(), ref), "Marquée comme lue"
+		err, notice = s.Reader.MarkRead(r.Context(), ref), "Marquée comme lue"
 	case "archive":
-		err, notice = s.Timeline.Archive(r.Context(), ref), "Archivée"
+		err, notice = s.Reader.Archive(r.Context(), ref), "Archivée"
 	case "replay":
-		err, notice = s.Timeline.Replay(r.Context(), ref), "Rejeu planifié"
+		err, notice = s.Reader.Replay(r.Context(), ref), "Rejeu planifié"
 	default:
 		http.Error(w, "unknown action", http.StatusBadRequest)
 		return
@@ -332,8 +333,8 @@ func (s *Server) subscribe(w http.ResponseWriter, r *http.Request) {
 			excluded = append(excluded, author)
 		}
 	}
-	subscription, err := s.Collector.Subscribe(r.Context(), app.SubscribeRequest{
-		Repository: repository, HTMLURL: htmlURL, Import: app.ImportMode(r.FormValue("import")), ExcludedAuthors: excluded,
+	subscription, err := s.Collector.Subscribe(r.Context(), collect.SubscribeRequest{
+		Repository: repository, HTMLURL: htmlURL, Import: collect.ImportMode(r.FormValue("import")), ExcludedAuthors: excluded,
 	})
 	notice := "Abonnement actif : " + repository
 	if err == nil && subscription.BlockedReason != "" {
