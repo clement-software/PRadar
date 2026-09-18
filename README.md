@@ -84,3 +84,34 @@ Le détail des entrées, sorties et critères de passage se trouve dans
   promues dans `docs/`.
 - Un prototype répond à une question puis vit sur une branche jetable. Le code
   validé et la décision, pas le prototype, rejoignent la branche principale.
+
+## Base de données locale
+
+PRadar conserve son état dans `pradar.sqlite`, sous le répertoire de données
+(`--data`). Le schéma évolue par migrations ordonnées, appliquées au
+démarrage :
+
+- une base absente est créée à la version courante ;
+- une base plus ancienne est migrée, après qu'une copie a été écrite à côté
+  d'elle sous la forme `pradar.sqlite.v<version>.<horodatage>.backup`, dont le
+  chemin est imprimé et journalisé ;
+- une base écrite par une version plus récente de PRadar est refusée, jamais
+  recréée ;
+- une base illisible ou corrompue arrête le démarrage, les fichiers sont
+  préservés et rien n'est écrit.
+
+### Restaurer une sauvegarde
+
+```sh
+# PRadar doit être arrêté
+cd "<répertoire de données>"
+mv pradar.sqlite pradar.sqlite.suspect            # conserver la base en cause
+rm -f pradar.sqlite-wal pradar.sqlite-shm         # journaux de la base écartée
+cp pradar.sqlite.v1.20260918T090000Z.backup pradar.sqlite
+```
+
+Une copie est un fichier unique et cohérent : elle s'ouvre directement, et sera
+migrée à son tour au prochain démarrage. Pour repartir de zéro, déplacez la
+base hors du répertoire plutôt que de l'effacer, puis relancez : les
+abonnements sont à recréer, et l'historique de la base écartée reste
+consultable en la rouvrant avec une version compatible.

@@ -19,9 +19,13 @@ import (
 
 // Store is the SQLite-backed implementation of the application stores.
 type Store struct {
-	db  *sql.DB
-	now func() time.Time
+	db        *sql.DB
+	now       func() time.Time
+	migration MigrationReport
 }
+
+// Migration reports what opening the database did to it.
+func (s *Store) Migration() MigrationReport { return s.migration }
 
 // Open opens or creates the database at path, enables WAL and a busy timeout,
 // validates the schema version and creates missing tables.
@@ -29,43 +33,28 @@ func Open(ctx context.Context, path string, now func() time.Time) (*Store, error
 	if strings.ContainsAny(path, "?#") {
 		return nil, errors.New("database path must not contain a query string or fragment")
 	}
+	db, err := openDB(path)
+	if err != nil {
+		return nil, err
+	}
+	store := &Store{db: db, now: now}
+	report, err := migrate(ctx, db, path, now, migrations)
+	if err != nil {
+		return nil, errors.Join(err, db.Close())
+	}
+	store.migration = report
+	return store, nil
+}
+
+// openDB opens the file in WAL mode with the demonstrator's pragmas.
+func openDB(path string) (*sql.DB, error) {
 	dsn := "file:" + url.PathEscape(path) +
 		"?_txlock=immediate&_pragma=busy_timeout(5000)&_pragma=journal_mode(WAL)&_pragma=foreign_keys(1)&_pragma=synchronous(NORMAL)"
 	db, err := sql.Open("sqlite", dsn)
 	if err != nil {
 		return nil, fmt.Errorf("open sqlite: %w", err)
 	}
-	store := &Store{db: db, now: now}
-	if err := store.initialise(ctx); err != nil {
-		return nil, errors.Join(err, db.Close())
-	}
-	return store, nil
-}
-
-func (s *Store) initialise(ctx context.Context) error {
-	var journal string
-	if err := s.db.QueryRowContext(ctx, "PRAGMA journal_mode").Scan(&journal); err != nil {
-		return fmt.Errorf("read journal mode: %w", err)
-	}
-	if !strings.EqualFold(journal, "wal") {
-		return fmt.Errorf("sqlite journal mode is %q, want wal", journal)
-	}
-	var version int
-	if err := s.db.QueryRowContext(ctx, "PRAGMA user_version").Scan(&version); err != nil {
-		return fmt.Errorf("read schema version: %w", err)
-	}
-	switch {
-	case version == 0:
-		if _, err := s.db.ExecContext(ctx, schema); err != nil {
-			return fmt.Errorf("create schema: %w", err)
-		}
-		if _, err := s.db.ExecContext(ctx, fmt.Sprintf("PRAGMA user_version = %d", schemaVersion)); err != nil {
-			return fmt.Errorf("record schema version: %w", err)
-		}
-	case version != schemaVersion:
-		return fmt.Errorf("unsupported schema version %d (want %d); the demonstrator database must be recreated", version, schemaVersion)
-	}
-	return nil
+	return db, nil
 }
 
 // Close releases the connection pool.
