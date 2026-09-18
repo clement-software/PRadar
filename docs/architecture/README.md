@@ -45,10 +45,19 @@ than silently changing this overview.
   deliver the pinned skill as system-prompt content and verify the granted
   engine surface at runtime; supersedes the delivery mechanism of ADR-0005.
 
+## Proposed decisions
+
+- [ADR-0007](../adr/0007-native-window-over-the-owned-local-server.md): show
+  the MVP interface in a native macOS window over the owned local server,
+  answering the PRD's open toolkit question. Awaiting arbitration.
+
 ## Prototype evidence
 
 - `codex/prototype/pradar-state-machine` at `471a8d2` validated lifecycle and
   stale-result behavior with the user.
+- `codex/prototype/pradar-desktop-shell` at `b6fc87f` validated that a native
+  macOS window renders the PRadar interface, including Mermaid, the system
+  theme and keyboard-focusable elements, from a single Go binary.
 - `codex/prototype/pradar-integration-spike` at `2007e82` validated atomic
   claims, lease recovery, retry exhaustion, stale publication protection, and
   the Claude JSON process boundary with a deterministic substitute.

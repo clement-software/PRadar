@@ -191,6 +191,16 @@ moins d'une minute, sans erreur factuelle critique. Si ce seuil n'est pas
 atteint, l'analyse ou sa présentation est corrigée puis le corpus est réévalué
 avant de poursuivre la construction du produit.
 
+### Décision du 18 septembre 2026
+
+Le propriétaire produit reporte la notation du corpus après la mise en place de
+l'interface du MVP : les analyses seront retravaillées et évaluées avec cette
+interface plutôt qu'avec le visualiseur jetable. Le seuil reste inchangé —
+seize analyses utiles sur vingt en moins d'une minute, sans erreur factuelle
+critique — et conditionne toujours la poursuite du produit, mais il est mesuré
+plus tard dans la construction. Le démonstrateur a établi que la chaîne
+complète fonctionne sur des pull requests réelles.
+
 ## Validation en usage réel
 
 Après le démonstrateur, PRadar est utilisé quotidiennement pendant deux
