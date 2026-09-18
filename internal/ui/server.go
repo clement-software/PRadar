@@ -113,6 +113,7 @@ func (s *Server) Serve(ctx context.Context, addr string, ready func(url string))
 
 type page struct {
 	Title       string
+	View        string // which navigation entry is current
 	Status      timeline.Status
 	Cards       []timeline.Card
 	Filter      timeline.Filter
@@ -164,7 +165,7 @@ func (s *Server) timeline(w http.ResponseWriter, r *http.Request) {
 		s.fail(w, err)
 		return
 	}
-	data := page{Title: "Timeline", Status: status, Filter: filter, Notice: q.Get("notice"), Problem: q.Get("problem"),
+	data := page{Title: "Timeline", View: "timeline", Status: status, Filter: filter, Notice: q.Get("notice"), Problem: q.Get("problem"),
 		States: []string{"open", "closed", "merged"}, Importances: []string{"low", "medium", "high"},
 		Engine: collect.EngineFingerprint(s.Collector.Profile)}
 	seenRepo, seenRisk := map[string]bool{}, map[string]bool{}
@@ -222,7 +223,7 @@ func (s *Server) detail(w http.ResponseWriter, r *http.Request) {
 		s.fail(w, err)
 		return
 	}
-	data := page{Title: detail.Card.Title, Detail: detail, Status: status, Ref: ref,
+	data := page{Title: detail.Card.Title, View: "timeline", Detail: detail, Status: status, Ref: ref,
 		Notice: r.URL.Query().Get("notice"), Problem: r.URL.Query().Get("problem")}
 	if s.Evaluator != nil {
 		if item, ok := s.Evaluator.Item(r.Context(), ref); ok {
@@ -258,7 +259,7 @@ func (s *Server) evaluation(w http.ResponseWriter, r *http.Request) {
 		s.fail(w, err)
 		return
 	}
-	data := page{Title: "Évaluation", Status: status, Notice: r.URL.Query().Get("notice"), Problem: r.URL.Query().Get("problem")}
+	data := page{Title: "Évaluation", View: "evaluation", Status: status, Notice: r.URL.Query().Get("notice"), Problem: r.URL.Query().Get("problem")}
 	progress, err := s.Evaluator.Report(r.Context())
 	switch {
 	case errors.Is(err, timeline.ErrNoCorpus):
