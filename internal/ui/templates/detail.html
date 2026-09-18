@@ -1,13 +1,13 @@
 {{template "head" .}}
 {{with .Detail}}
 <article class="detail" aria-labelledby="detail-title">
-  <header class="forgejo-header">
-    <p class="meta"><span class="repo">{{.Card.Ref.Repository}}</span> #{{.Card.Ref.Number}} · {{.Card.Author}} · mis à jour {{when .Card.UpdatedAt}} · <span class="state state-{{.Card.State}}">{{.Card.State}}</span>{{if .Archived}} · archivée{{else if .Card.Unread}} · <strong>non lue</strong>{{end}}</p>
+  <header>
+    <p class="meta"><span class="repo">{{.Card.Ref.Repository}}</span> #{{.Card.Ref.Number}} · {{.Card.Author}} · mis à jour {{when .Card.UpdatedAt}} · {{.Card.State}}{{if .Archived}} · archivée{{else if .Card.Unread}} · <strong>non lue</strong>{{end}}</p>
     <h1 id="detail-title">{{.Card.Title}}</h1>
     <p class="actions">
-      {{with safeURL .Card.HTMLURL}}<a href="{{.}}" rel="noopener noreferrer">Ouvrir dans Forgejo</a>{{else}}<span class="problem">Lien Forgejo invalide</span>{{end}}
+      {{with safeURL .Card.HTMLURL}}<a class="button" href="{{.}}" rel="noopener noreferrer">Ouvrir dans Forgejo</a>{{else}}<span class="problem">Lien Forgejo invalide</span>{{end}}
       {{if and .HasCard (not .Archived)}}
-      <form method="post" action="{{prLink $.Ref.Key}}"><input type="hidden" name="action" value="read"><button type="submit" {{if not .Card.Unread}}disabled{{end}}>Marquer comme lue</button></form>
+      <form method="post" action="{{prLink $.Ref.Key}}"><input type="hidden" name="action" value="read"><button type="submit" class="primary" {{if not .Card.Unread}}disabled{{end}}>Marquer comme lue</button></form>
       <form method="post" action="{{prLink $.Ref.Key}}"><input type="hidden" name="action" value="archive"><button type="submit">Archiver</button></form>
       {{end}}
       <form method="post" action="{{prLink $.Ref.Key}}"><input type="hidden" name="action" value="replay"><button type="submit">Rejouer l'analyse</button></form>
@@ -15,16 +15,19 @@
   </header>
 
   {{if .HasCard}}
-  <section aria-labelledby="analysis-title" class="analysis">
+  <section aria-labelledby="analysis-title">
     <h2 id="analysis-title">Analyse</h2>
     {{if eq .Card.Analysis.Status "unavailable"}}
       <p class="unavailable">Analyse indisponible après trois tentatives. La pull request reste accessible dans Forgejo ; un rejeu avec un prompt, un skill, un moteur ou un modèle différent crée une nouvelle analyse.</p>
-      {{if .Provenance.Failure}}<p class="failure">Dernière erreur technique : {{.Provenance.Failure}}</p>{{end}}
+      {{if .Provenance.Failure}}<p class="meta">Dernière erreur technique : {{.Provenance.Failure}}</p>{{end}}
     {{else}}
       <p class="intent">{{.Card.Analysis.Intent}}</p>
-      <p class="badges"><span class="badge importance">Importance : {{.Card.Analysis.Importance}}</span>{{range .Card.Analysis.Risks}} <span class="badge risk">{{.}}</span>{{end}}</p>
+      <p class="badges">
+        <span class="badge importance">Importance : {{.Card.Analysis.Importance}}</span>
+        {{range .Card.Analysis.Risks}}<span class="badge risk">{{.}}</span>{{end}}
+      </p>
       <div class="body">{{markdown .Card.Analysis.Body}}</div>
-      <h3>Changements depuis la version précédente{{if .Card.Analysis.PreviousHeadSHA}} ({{.Card.Analysis.PreviousHeadSHA}}){{end}}</h3>
+      <h2>Changements depuis la version précédente{{if .Card.Analysis.PreviousHeadSHA}} <code>{{.Card.Analysis.PreviousHeadSHA}}</code>{{end}}</h2>
       <div class="body">{{if .Card.Analysis.ChangeSincePrevious}}{{markdown .Card.Analysis.ChangeSincePrevious}}{{else}}<p>Première version analysée.</p>{{end}}</div>
     {{end}}
     <details class="provenance">
@@ -42,15 +45,15 @@
     </details>
   </section>
   {{else}}
-  <p class="empty">Aucune analyse publiée pour la dernière version. {{if .Archived}}La carte réapparaîtra une fois la nouvelle version analysée.{{end}}</p>
+  <p class="empty">Aucune analyse publiée pour la dernière version.{{if .Archived}} La carte réapparaîtra une fois cette version analysée.{{end}}</p>
   {{end}}
 
   {{if $.CorpusItem}}
-  <section aria-labelledby="score-title" class="scorecard">
+  <section class="scorecard" aria-labelledby="score-title">
     <h2 id="score-title">Compréhension en moins d'une minute</h2>
     <p class="meta">Corpus : {{$.CorpusItem.Size}} · {{$.CorpusItem.Authorship}} · {{$.CorpusItem.Category}} · tête figée <code>{{$.CorpusItem.HeadSHA}}</code> · {{$.CorpusItem.Reason}}</p>
     {{with $.Score}}<p class="notice" role="status">Score enregistré le {{when .RecordedAt}} : {{duration .Elapsed}}, {{if .Passed}}réussi{{else}}échoué{{end}}{{if .CriticalError}}, erreur factuelle critique{{end}}.</p>{{end}}
-    <form method="post" action="/evaluation/score{{prLink $.Ref.Key}}" class="score" data-timer>
+    <form method="post" action="/evaluation/score{{prLink $.Ref.Key}}" data-timer>
       <p><button type="button" data-start>Démarrer le minuteur</button> <output data-elapsed aria-live="polite">0 s</output></p>
       <input type="hidden" name="elapsed_ms" value="0" data-elapsed-ms>
       <label>Temps mesuré (secondes, si le minuteur n'est pas utilisé) <input type="number" name="elapsed_seconds" min="1" step="1" data-elapsed-seconds></label>
@@ -63,12 +66,12 @@
       <label><input type="checkbox" name="useful"> Analyse utile</label>
       <label><input type="checkbox" name="critical_error"> Erreur factuelle critique</label>
       <label>Notes <input name="notes"></label>
-      <button type="submit">Enregistrer le score</button>
+      <button type="submit" class="primary">Enregistrer le score</button>
     </form>
   </section>
   {{end}}
 
-  <section aria-labelledby="history-title" class="history">
+  <section class="history" aria-labelledby="history-title">
     <h2 id="history-title">Historique de pull request</h2>
     <ol>
       {{range .History}}<li><time>{{when .CreatedAt}}</time> analyse {{.Analysis.Status}} de <code>{{.Analysis.HeadSHA}}</code> ({{.Provenance.Profile.Engine}}/{{.Provenance.Profile.Model}}, prompt {{.Provenance.Profile.PromptVersion}}, skill {{.Provenance.Profile.SkillVersion}}){{if .Published}} — publiée{{else}} — conservée, obsolète{{end}}</li>{{end}}

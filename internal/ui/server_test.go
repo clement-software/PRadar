@@ -196,7 +196,7 @@ func TestVisualizer_OrdersCartesAndKeepsHostileValuesInert(t *testing.T) {
 	if strings.Count(body, `<li class="card`) != 2 {
 		t.Error("one carte per pull request expected")
 	}
-	for _, forbidden := range []string{"<script>", "<img", "<svg", "<iframe", `href="javascript:`, "<b>mallory</b>"} {
+	for _, forbidden := range []string{"<script>", "<img", "<svg onload", "<iframe", `href="javascript:`, "<b>mallory</b>"} {
 		if strings.Contains(body, forbidden) {
 			t.Errorf("timeline renders hostile value %q", forbidden)
 		}
@@ -205,7 +205,7 @@ func TestVisualizer_OrdersCartesAndKeepsHostileValuesInert(t *testing.T) {
 		t.Error("an unsafe Forgejo URL must be replaced by an inert notice")
 	}
 	_, detail := v.get("/pr/controlled/demo%238")
-	for _, forbidden := range []string{"<script>", "<img", "<svg", "<iframe", `href="javascript:`} {
+	for _, forbidden := range []string{"<script>", "<img", "<svg onload", "<iframe", `href="javascript:`} {
 		if strings.Contains(detail, forbidden) {
 			t.Errorf("detail renders hostile value %q", forbidden)
 		}
@@ -249,7 +249,19 @@ func TestVisualizer_AccessibilityAndThemes(t *testing.T) {
 	if !strings.Contains(csp, "script-src 'self';") || !strings.Contains(csp, "style-src 'self' 'unsafe-inline'") {
 		t.Errorf("CSP must keep scripts local while letting Mermaid style its SVG: %s", csp)
 	}
-	for _, pair := range [][2]string{{"#17202a", "#f6f8fb"}, {"#4b5563", "#ffffff"}, {"#e6edf3", "#0f1419"}, {"#b3bcc7", "#161c24"}, {"#8ab4ff", "#161c24"}, {"#2f6fed", "#ffffff"}} {
+	// Foreground on background, for every pair the interface actually paints.
+	for _, pair := range [][2]string{
+		{"#12161d", "#eceef3"}, // text on the light ground
+		{"#12161d", "#dce9ff"}, // text on a low-importance card
+		{"#12161d", "#ffe8d0"}, // text on a medium-importance card
+		{"#12161d", "#ffdfe2"}, // text on a high-importance card
+		{"#545c6b", "#ffffff"}, // secondary text on a surface
+		{"#1f4fe0", "#ffffff"}, // brand on a surface
+		{"#b0231c", "#ffffff"}, // danger on a surface
+		{"#e8edf5", "#0e1116"}, // text on the dark ground
+		{"#aab4c4", "#161c24"}, // secondary text in the dark
+		{"#8ab0ff", "#161c24"}, // brand in the dark
+	} {
 		if ratio := contrast(pair[0], pair[1]); ratio < 4.5 {
 			t.Errorf("contrast %s on %s = %.2f, below WCAG AA 4.5", pair[0], pair[1], ratio)
 		}
@@ -369,5 +381,55 @@ func TestVisualizer_AuthorisesTheEngineAndExportsUsage(t *testing.T) {
 		if strings.Contains(export, forbidden) {
 			t.Errorf("usage export leaks %q", forbidden)
 		}
+	}
+}
+
+func TestVisualizer_ShowsTheProductionReadingSurface(t *testing.T) {
+	t.Parallel()
+	v := start(t)
+	if _, err := v.coll.Subscribe(t.Context(), collect.SubscribeRequest{Repository: controlled.Repository,
+		HTMLURL: "https://forge.example/controlled/demo", AuthoriseEngine: true}); err != nil {
+		t.Fatal(err)
+	}
+	if err := v.worker.RunOne(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+
+	_, timelinePage := v.get("/")
+	for _, want := range []string{
+		`aria-label="PRadar, accueil"`,            // the wordmark identifies the application
+		`aria-current="page"`,                     // the current view is announced
+		`aria-label="État de la collecte"`,        // degraded state without logs
+		"Synchronisation <strong>",                // last successful synchronisation
+		"En attente <strong>0</strong>",           // pending work
+		"Nouvelles tentatives <strong>0</strong>", // retries
+		`class="card importance-medium`,           // the pastel card carries the importance
+		"Lire l'analyse", "Forgejo",               // one clear action pair per card
+		"Moteur configuré : controlled/m", // which engine is running
+	} {
+		if !strings.Contains(timelinePage, want) {
+			t.Errorf("timeline lacks %q", want)
+		}
+	}
+	if strings.Count(timelinePage, `<li class="card`) != 1 {
+		t.Error("one carte per pull request expected")
+	}
+	if _, empty := v.get("/?importance=high"); !strings.Contains(empty, "Aucune carte pour ce filtre") {
+		t.Error("an empty filter result must say so rather than show nothing")
+	}
+
+	_, detail := v.get("/pr/controlled/demo%231")
+	for _, want := range []string{
+		"Ouvrir dans Forgejo", "Marquer comme lue", "Archiver", "Rejouer l'analyse",
+		"Changements depuis la version précédente", "Provenance", "Historique de pull request",
+		`<pre class="mermaid">`, "Importance : medium",
+	} {
+		if !strings.Contains(detail, want) {
+			t.Errorf("detail lacks %q", want)
+		}
+	}
+	// Provenance is a secondary section, not the first thing read.
+	if strings.Index(detail, "Analyse") > strings.Index(detail, "Provenance") {
+		t.Error("the analysis must come before its provenance")
 	}
 }

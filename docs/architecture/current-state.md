@@ -34,7 +34,7 @@ CLI analyzer.
 | `internal/adapter/wake` | Resume detection from a wall-clock jump, without a platform framework | `time` |
 | `internal/adapter/workspace` | Owned temporary root, safe materialisation, cleanup and startup scavenging | `os` |
 | `internal/controlled` | Deterministic forge and analyzer substitutes for `--controlled` | `internal/collect`, `internal/analyse` |
-| `internal/ui` | Loopback visualizer, safe Markdown rendering, embedded assets | `net/http`, `html/template`, `goldmark`, `internal/collect`, `internal/timeline` |
+| `internal/ui` | Reading interface served on loopback: timeline, detail, filters, reading actions, abonnement management, evaluation and usage export, with safe Markdown rendering and embedded pinned assets | `net/http`, `html/template`, `goldmark`, `internal/collect`, `internal/timeline` |
 | `internal/apptest` | Cross-boundary application tests over a real temporary database with controlled substitutes | the packages under test |
 
 `internal/architecture_test.go` rejects outward imports from the policy

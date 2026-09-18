@@ -10,10 +10,13 @@
 <body>
 <a class="skip" href="#main">Aller au contenu</a>
 <header class="top">
-  <a class="brand" href="/" aria-label="PRadar, timeline">PRadar</a>
-  <nav aria-label="Vue"><a href="/">Timeline</a> · <a href="/evaluation">Évaluation</a></nav>
-  {{template "status" .Status}}
+  <a class="brand" href="/" aria-label="PRadar, accueil">{{template "wordmark"}}</a>
+  <nav class="views" aria-label="Vues">
+    <a href="/"{{if eq .View "timeline"}} aria-current="page"{{end}}>Timeline</a>
+    <a href="/evaluation"{{if eq .View "evaluation"}} aria-current="page"{{end}}>Évaluation</a>
+  </nav>
 </header>
+{{template "status" .Status}}
 {{if .Notice}}<p class="notice" role="status">{{.Notice}}</p>{{end}}
 {{if .Problem}}<p class="problem" role="alert">{{.Problem}}</p>{{end}}
 <main id="main" tabindex="-1">{{end}}
@@ -24,11 +27,19 @@
 </body>
 </html>{{end}}
 
+{{define "wordmark"}}<svg viewBox="0 0 300 76" role="img" aria-hidden="true" focusable="false">
+  <rect x="3" y="3" width="294" height="70" fill="none" stroke="currentColor" stroke-width="6"></rect>
+  <text x="26" y="53" font-family="-apple-system, Helvetica Neue, sans-serif" font-size="42" font-weight="600" fill="currentColor">PRadar</text>
+  <circle cx="232" cy="46" r="8" fill="currentColor"></circle>
+  <path d="M246 46a14 14 0 0 0-14-14" fill="none" stroke="currentColor" stroke-width="6" stroke-linecap="round"></path>
+  <path d="M262 46a30 30 0 0 0-30-30" fill="none" stroke="currentColor" stroke-width="6" stroke-linecap="round"></path>
+</svg>{{end}}
+
 {{define "status"}}<ul class="status" aria-label="État de la collecte">
-  <li>Synchronisation : {{if .LastSyncAt.IsZero}}jamais{{else}}{{when .LastSyncAt}}{{end}}</li>
-  <li>En attente : {{.Pending}}</li>
-  <li>En cours : {{.Running}}</li>
-  <li>Nouvelles tentatives : {{.Retrying}}</li>
-  <li>Indisponibles : {{.Unavailable}}</li>
+  <li>Synchronisation <strong>{{if .LastSyncAt.IsZero}}jamais{{else}}{{when .LastSyncAt}}{{end}}</strong></li>
+  <li>En attente <strong>{{.Pending}}</strong></li>
+  <li>En cours <strong>{{.Running}}</strong></li>
+  <li>Nouvelles tentatives <strong>{{.Retrying}}</strong></li>
+  <li>Indisponibles <strong>{{.Unavailable}}</strong></li>
   {{range .Blocked}}<li class="blocked">Bloqué : {{.Repository}} — {{.BlockedReason}}</li>{{end}}
 </ul>{{end}}
