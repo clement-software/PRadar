@@ -16,15 +16,16 @@ import (
 // never reset so late work from a previous activation stays ineligible.
 func (s *Store) PutSubscription(ctx context.Context, subscription collect.Subscription) error {
 	_, err := s.db.ExecContext(ctx, `
-INSERT INTO subscriptions(repository, html_url, active, blocked_reason, excluded_authors, created_unix)
-VALUES (?, ?, ?, ?, ?, ?)
+INSERT INTO subscriptions(repository, html_url, active, blocked_reason, excluded_authors, authorised_engine, created_unix)
+VALUES (?, ?, ?, ?, ?, ?, ?)
 ON CONFLICT(repository) DO UPDATE SET
   html_url = excluded.html_url,
   active = excluded.active,
   blocked_reason = excluded.blocked_reason,
-  excluded_authors = excluded.excluded_authors`,
+  excluded_authors = excluded.excluded_authors,
+  authorised_engine = excluded.authorised_engine`,
 		subscription.Repository, subscription.HTMLURL, subscription.Active, subscription.BlockedReason,
-		marshal(nonNil(subscription.ExcludedAuthors)), s.now().Unix())
+		marshal(nonNil(subscription.ExcludedAuthors)), subscription.AuthorisedEngine, s.now().Unix())
 	if err != nil {
 		return fmt.Errorf("store abonnement: %w", err)
 	}
@@ -38,7 +39,7 @@ func nonNil(values []string) []string {
 	return values
 }
 
-const subscriptionColumns = `repository, html_url, generation, active, blocked_reason, excluded_authors, last_sync_unix`
+const subscriptionColumns = `repository, html_url, generation, active, blocked_reason, excluded_authors, last_sync_unix, authorised_engine`
 
 func scanSubscription(row interface{ Scan(...any) error }) (collect.Subscription, error) {
 	var (
@@ -47,7 +48,7 @@ func scanSubscription(row interface{ Scan(...any) error }) (collect.Subscription
 		lastSync     int64
 	)
 	if err := row.Scan(&subscription.Repository, &subscription.HTMLURL, &subscription.Generation, &subscription.Active,
-		&subscription.BlockedReason, &authors, &lastSync); err != nil {
+		&subscription.BlockedReason, &authors, &lastSync, &subscription.AuthorisedEngine); err != nil {
 		return collect.Subscription{}, err
 	}
 	if err := json.Unmarshal([]byte(authors), &subscription.ExcludedAuthors); err != nil {
@@ -86,6 +87,34 @@ func (s *Store) ListSubscriptions(ctx context.Context) ([]collect.Subscription, 
 		subscriptions = append(subscriptions, subscription)
 	}
 	return subscriptions, rows.Err()
+}
+
+// AuthoriseEngine records the engine the user allowed for this repository and
+// reactivates the abonnement.
+func (s *Store) AuthoriseEngine(ctx context.Context, repository, fingerprint string) error {
+	n, err := rowsAffected(s.db.ExecContext(ctx, `
+UPDATE subscriptions SET authorised_engine = ?, active = 1, blocked_reason = '' WHERE repository = ?`, fingerprint, repository))
+	if err != nil {
+		return fmt.Errorf("authorise engine: %w", err)
+	}
+	if n == 0 {
+		return collect.ErrNotFound
+	}
+	return nil
+}
+
+// BlockSubscription deactivates an abonnement with a visible reason, keeping
+// every pull request, analysis and event.
+func (s *Store) BlockSubscription(ctx context.Context, repository, reason string) error {
+	n, err := rowsAffected(s.db.ExecContext(ctx, `
+UPDATE subscriptions SET active = 0, blocked_reason = ? WHERE repository = ?`, reason, repository))
+	if err != nil {
+		return fmt.Errorf("block abonnement: %w", err)
+	}
+	if n == 0 {
+		return collect.ErrNotFound
+	}
+	return nil
 }
 
 // RecordSync stores the last successful synchronisation or the blocking reason.

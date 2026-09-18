@@ -31,6 +31,7 @@ CLI analyzer.
 | `internal/adapter/forgejo` | Instance and repository URL validation, read-only bounded HTTP client, self-redacting `Token` | `net/http`, `internal/pullrequest` |
 | `internal/adapter/claudecli` | Restricted `claude -p` invocation, pinned `show-me` guidance, runtime verification of the granted surface, stream decoding and contract validation | `os/exec`, `internal/analyse` |
 | `internal/adapter/keychain` | Token lookup and storage through `/usr/bin/security` | `os/exec`, `internal/adapter/forgejo` |
+| `internal/adapter/wake` | Resume detection from a wall-clock jump, without a platform framework | `time` |
 | `internal/adapter/workspace` | Owned temporary root, safe materialisation, cleanup and startup scavenging | `os` |
 | `internal/controlled` | Deterministic forge and analyzer substitutes for `--controlled` | `internal/collect`, `internal/analyse` |
 | `internal/ui` | Loopback visualizer, safe Markdown rendering, embedded assets | `net/http`, `html/template`, `goldmark`, `internal/collect`, `internal/timeline` |
@@ -42,6 +43,10 @@ substitutes at the interfaces above.
 
 ## Data and control flow
 
+0. Launch, every poll tick and every resume from sleep run the same complete
+   reconciliation; a resume drops a pending tick so waking costs one catch-up.
+   An abonnement whose authorised engine no longer matches the configured one
+   is deactivated with a visible reason until the user authorises it again.
 1. `Collector.reconcile` lists open pull requests, applies author and draft
    exclusions, and calls `ObservePullRequest`, which runs `pullrequest.Reconcile`
    inside one transaction: upsert the observed version, mark it unread,

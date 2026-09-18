@@ -72,6 +72,25 @@ type RepositoryStatus struct {
 	Active        bool
 	BlockedReason string
 	LastSyncAt    time.Time
+	// AuthorisedEngine is the engine configuration the user allowed for this
+	// repository, so the interface can offer to authorise the current one.
+	AuthorisedEngine string
+}
+
+// UsageRecord is one analysis's local cost and duration measurement. It
+// carries no pull-request body and no credential, and never leaves the
+// machine unless the user exports it.
+type UsageRecord struct {
+	PullRequest string                     `json:"pull_request"`
+	HeadSHA     string                     `json:"head_sha"`
+	Identity    pullrequest.Identity       `json:"identity"`
+	Status      pullrequest.AnalysisStatus `json:"status"`
+	Profile     pullrequest.Profile        `json:"profile"`
+	Attempt     int                        `json:"attempt"`
+	StartedAt   time.Time                  `json:"started_at"`
+	Duration    time.Duration              `json:"duration_ns"`
+	Usage       map[string]any             `json:"usage,omitempty"`
+	Failure     string                     `json:"failure,omitempty"`
 }
 
 // Status summarises collection and analysis health for the interface.

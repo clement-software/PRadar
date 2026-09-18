@@ -24,6 +24,11 @@ type Forge interface {
 // CollectionStore is the durable state owned by collection.
 type CollectionStore interface {
 	PutSubscription(ctx context.Context, subscription Subscription) error
+	// AuthoriseEngine records the engine the user allows for this repository
+	// and reactivates the abonnement.
+	AuthoriseEngine(ctx context.Context, repository, fingerprint string) error
+	// BlockSubscription deactivates an abonnement with a visible reason.
+	BlockSubscription(ctx context.Context, repository, reason string) error
 	GetSubscription(ctx context.Context, repository string) (Subscription, error)
 	ListSubscriptions(ctx context.Context) ([]Subscription, error)
 	RecordSync(ctx context.Context, repository string, at time.Time, blockedReason string) error
@@ -43,6 +48,8 @@ type Collector struct {
 	Log      *slog.Logger
 	// Interrupt cancels the analysis currently running for a repository; nil when no worker runs.
 	Interrupt func(repository string)
+	// Wakes reports that the machine resumed from sleep; nil means never.
+	Wakes <-chan time.Time
 	// Tick supplies polling ticks; nil means time.Tick.
 	Tick func(interval time.Duration) <-chan time.Time
 }
@@ -53,6 +60,9 @@ type SubscribeRequest struct {
 	HTMLURL         string
 	Import          ImportMode
 	ExcludedAuthors []string
+	// AuthoriseEngine is the user allowing the configured engine to read this
+	// repository's content. Without it the abonnement stays blocked.
+	AuthoriseEngine bool
 }
 
 const defaultImportLimit = 10
@@ -76,6 +86,16 @@ func (c *Collector) Subscribe(ctx context.Context, request SubscribeRequest) (Su
 		Active:          true,
 		ExcludedAuthors: slices.Clone(request.ExcludedAuthors),
 	}
+	if !request.AuthoriseEngine {
+		subscription.Active = false
+		subscription.BlockedReason = unauthorisedReason(EngineFingerprint(c.Profile))
+		if err := c.Store.PutSubscription(ctx, subscription); err != nil {
+			return Subscription{}, err
+		}
+		c.Log.Warn("abonnement blocked", "repository", request.Repository, "reason", subscription.BlockedReason)
+		return subscription, nil
+	}
+	subscription.AuthorisedEngine = EngineFingerprint(c.Profile)
 	if err := c.Forge.CheckRepository(ctx, request.Repository); err != nil {
 		subscription.Active = false
 		subscription.BlockedReason = err.Error()
@@ -92,6 +112,24 @@ func (c *Collector) Subscribe(ctx context.Context, request SubscribeRequest) (Su
 		return Subscription{}, err
 	}
 	return c.Store.GetSubscription(ctx, request.Repository)
+}
+
+// unauthorisedReason is the visible, actionable reason shown when the
+// configured engine may not read a repository's content.
+func unauthorisedReason(fingerprint string) string {
+	return "the configured engine " + fingerprint + " is not authorised to read this repository's content"
+}
+
+// AuthoriseEngine lets the user allow the configured engine to read a
+// repository again, which reactivates an abonnement blocked for that reason
+// without recreating it.
+func (c *Collector) AuthoriseEngine(ctx context.Context, repository string) error {
+	fingerprint := EngineFingerprint(c.Profile)
+	if err := c.Store.AuthoriseEngine(ctx, repository, fingerprint); err != nil {
+		return err
+	}
+	c.Log.Info("engine authorised", "repository", repository, "engine", fingerprint)
+	return nil
 }
 
 // Unsubscribe stops collection, cancels outstanding work and keeps history.
@@ -129,9 +167,20 @@ func (c *Collector) ReconcileAll(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
+	fingerprint := EngineFingerprint(c.Profile)
 	var errs []error
 	for _, subscription := range subscriptions {
 		if !subscription.Active {
+			continue
+		}
+		// The engine or the model may have changed since the user authorised
+		// this repository; collection stops until they authorise the new one.
+		if subscription.AuthorisedEngine != fingerprint {
+			if err := c.Store.BlockSubscription(ctx, subscription.Repository, unauthorisedReason(fingerprint)); err != nil {
+				errs = append(errs, err)
+				continue
+			}
+			c.Log.Warn("abonnement blocked", "repository", subscription.Repository, "reason", unauthorisedReason(fingerprint))
 			continue
 		}
 		if err := c.reconcile(ctx, subscription, -1); err != nil {
@@ -204,10 +253,10 @@ func (c *Collector) block(ctx context.Context, repository string, cause error) e
 	return c.Store.RecordSync(ctx, repository, time.Time{}, cause.Error())
 }
 
-// Poll reconciles immediately (launch) and then on every tick until ctx ends.
-// Every tick is a complete reconciliation, so a wake after sleep needs no
-// special handling: the first tick after waking catches up. Tick is
-// time.Tick in production and a test-controlled channel otherwise.
+// Poll reconciles immediately (launch), then on every tick and whenever the
+// machine wakes, until ctx ends. Every reconciliation is complete, so waking
+// needs no special catch-up logic beyond running one. Tick is time.Tick in
+// production and a test-controlled channel otherwise.
 func (c *Collector) Poll(ctx context.Context, interval time.Duration) {
 	tick := c.Tick
 	if tick == nil {
@@ -222,6 +271,14 @@ func (c *Collector) Poll(ctx context.Context, interval time.Duration) {
 		case <-ctx.Done():
 			return
 		case <-ticks:
+		case <-c.Wakes:
+			// A sleep usually leaves a tick pending as well; dropping it keeps
+			// waking up to exactly one catch-up reconciliation.
+			select {
+			case <-ticks:
+			default:
+			}
+			c.Log.Info("machine woke, reconciling")
 		}
 	}
 }

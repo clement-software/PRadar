@@ -23,6 +23,11 @@ type migration struct {
 // migrations is the ladder applied at startup, in order.
 var migrations = []migration{
 	{version: 1, name: "initial schema", stmts: schema},
+	{version: 2, name: "record the engine a user authorised per repository", stmts: `
+ALTER TABLE subscriptions ADD COLUMN authorised_engine TEXT NOT NULL DEFAULT '';
+UPDATE subscriptions SET active = 0,
+  blocked_reason = 'the configured engine is not authorised to read this repository''s content'
+WHERE active = 1;`},
 }
 
 // latest is the version a ladder brings a database to.

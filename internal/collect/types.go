@@ -33,6 +33,16 @@ type Subscription struct {
 	BlockedReason   string
 	ExcludedAuthors []string
 	LastSyncAt      time.Time
+	// AuthorisedEngine is the engine configuration the user allowed to read
+	// this repository's content, as EngineFingerprint spells it. A
+	// subscription whose fingerprint no longer matches cannot be active.
+	AuthorisedEngine string
+}
+
+// EngineFingerprint identifies the engine configuration a user authorises for
+// a repository. Changing the engine or the model requires a new authorisation.
+func EngineFingerprint(profile pullrequest.Profile) string {
+	return profile.Engine + "/" + profile.Model
 }
 
 // ObservationRequest is one durable observation plus its scheduling decision.

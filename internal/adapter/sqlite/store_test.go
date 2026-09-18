@@ -48,14 +48,15 @@ type harness struct {
 }
 
 func subscriptionFixture() collect.Subscription {
-	return collect.Subscription{Repository: ref.Repository, HTMLURL: "https://forge.test/acme/widgets", Active: true}
+	return collect.Subscription{Repository: ref.Repository, HTMLURL: "https://forge.test/acme/widgets", Active: true,
+		AuthorisedEngine: collect.EngineFingerprint(profile)}
 }
 
 func open(t *testing.T) *harness {
 	t.Helper()
 	h := &harness{t: t, ctx: t.Context(), clock: newClock(), path: t.TempDir() + "/pradar.sqlite"}
 	h.reopen()
-	if err := h.store.PutSubscription(h.ctx, collect.Subscription{Repository: ref.Repository, HTMLURL: "https://forge.test/acme/widgets", Active: true}); err != nil {
+	if err := h.store.PutSubscription(h.ctx, subscriptionFixture()); err != nil {
 		t.Fatal(err)
 	}
 	return h
