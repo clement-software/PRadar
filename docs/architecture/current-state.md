@@ -31,6 +31,7 @@ CLI analyzer.
 | `internal/adapter/forgejo` | Instance and repository URL validation, read-only bounded HTTP client, self-redacting `Token` | `net/http`, `internal/pullrequest` |
 | `internal/adapter/claudecli` | Restricted `claude -p` invocation, pinned `show-me` guidance, runtime verification of the granted surface, stream decoding and contract validation | `os/exec`, `internal/analyse` |
 | `internal/adapter/keychain` | Token lookup and storage through `/usr/bin/security` | `os/exec`, `internal/adapter/forgejo` |
+| `internal/adapter/desktop` | The native macOS window over the owned origin, and handing an external link to the browser | `webview`, `os/exec` |
 | `internal/adapter/wake` | Resume detection from a wall-clock jump, without a platform framework | `time` |
 | `internal/adapter/workspace` | Owned temporary root, safe materialisation, cleanup and startup scavenging | `os` |
 | `internal/controlled` | Deterministic forge and analyzer substitutes for `--controlled` | `internal/collect`, `internal/analyse` |

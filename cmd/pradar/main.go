@@ -15,12 +15,14 @@ import (
 	"os/exec"
 	"os/signal"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"sync"
 	"syscall"
 	"time"
 
 	"github.com/clement-software/PRadar/internal/adapter/claudecli"
+	"github.com/clement-software/PRadar/internal/adapter/desktop"
 	"github.com/clement-software/PRadar/internal/adapter/forgejo"
 	"github.com/clement-software/PRadar/internal/adapter/keychain"
 	"github.com/clement-software/PRadar/internal/adapter/sqlite"
@@ -245,6 +247,19 @@ func reportMigration(log *slog.Logger, report sqlite.MigrationReport) {
 	}
 }
 
+// waitFor waits for the owned goroutines, but never for longer than grace: a
+// stuck engine must not keep the application alive after its window closed.
+func waitFor(wg *sync.WaitGroup, grace time.Duration) bool {
+	done := make(chan struct{})
+	go func() { defer close(done); wg.Wait() }()
+	select {
+	case <-done:
+		return true
+	case <-time.After(grace):
+		return false
+	}
+}
+
 func defaultDataDir() string {
 	home, _ := os.UserHomeDir()
 	return filepath.Join(home, "Library", "Application Support", "PRadar-demonstrator")
@@ -279,18 +294,22 @@ func runToken(args []string) error {
 }
 
 type config struct {
-	dataDir      string
-	listen       string
-	controlled   bool
-	pollInterval time.Duration
-	debounce     time.Duration
-	lease        time.Duration
-	instance     string
-	model        string
-	claude       string
-	analysisTime time.Duration
-	maxTurns     int
-	maxBudgetUSD float64
+	dataDir       string
+	listen        string
+	controlled    bool
+	pollInterval  time.Duration
+	debounce      time.Duration
+	lease         time.Duration
+	shutdownGrace time.Duration
+	instance      string
+	window        bool
+	windowWidth   int
+	windowHeight  int
+	model         string
+	claude        string
+	analysisTime  time.Duration
+	maxTurns      int
+	maxBudgetUSD  float64
 }
 
 func runDemonstrator(args []string) error {
@@ -302,7 +321,11 @@ func runDemonstrator(args []string) error {
 	fs.DurationVar(&cfg.pollInterval, "poll", 5*time.Minute, "Forgejo polling interval")
 	fs.DurationVar(&cfg.debounce, "debounce", 10*time.Minute, "anti-rebond window per pull request")
 	fs.DurationVar(&cfg.lease, "lease", 15*time.Minute, "analysis lease duration")
+	fs.DurationVar(&cfg.shutdownGrace, "shutdown-grace", 10*time.Second, "how long owned work may take to stop after the window closes")
 	fs.StringVar(&cfg.instance, "instance", os.Getenv("PRADAR_FORGEJO_INSTANCE"), "Forgejo instance URL (https)")
+	fs.BoolVar(&cfg.window, "window", runtime.GOOS == "darwin", "show the interface in a native window instead of printing its address")
+	fs.IntVar(&cfg.windowWidth, "window-width", 1180, "window width in points")
+	fs.IntVar(&cfg.windowHeight, "window-height", 860, "window height in points")
 	fs.StringVar(&cfg.model, "model", os.Getenv("PRADAR_CLAUDE_MODEL"), "the single Claude model used for every analysis")
 	fs.StringVar(&cfg.claude, "claude", "claude", "Claude CLI executable")
 	fs.DurationVar(&cfg.analysisTime, "analysis-timeout", 10*time.Minute, "maximum duration of one Claude invocation")
@@ -384,15 +407,62 @@ func runDemonstrator(args []string) error {
 	}
 
 	server := &ui.Server{Reader: reader, Collector: collector, Evaluator: evaluator, Log: log, ParseRepositoryURL: instance.ParseRepositoryURL}
-	var wg sync.WaitGroup
-	wg.Go(func() { waker.Run(ctx) })
-	wg.Go(func() { collector.Poll(ctx, cfg.pollInterval) })
-	wg.Go(func() { worker.Run(ctx, 2*time.Second) })
-	err = server.Serve(ctx, cfg.listen, func(url string) {
-		log.Info("visualizer ready", "url", url)
-		fmt.Println(url)
+	if cfg.window {
+		// A window must never navigate away from the owned origin, so the
+		// interface hands external links to the browser through the server.
+		server.OpenExternal = desktop.OpenInBrowser
+	}
+
+	// Everything the application owns runs in goroutines; the main goroutine
+	// belongs to the window, because macOS requires it.
+	serveCtx, stopServing := context.WithCancel(ctx)
+	defer stopServing()
+	var (
+		wg       sync.WaitGroup
+		serveErr error
+		address  = make(chan string, 1)
+	)
+	wg.Go(func() { waker.Run(serveCtx) })
+	wg.Go(func() { collector.Poll(serveCtx, cfg.pollInterval) })
+	wg.Go(func() { worker.Run(serveCtx, 2*time.Second) })
+	wg.Go(func() {
+		serveErr = server.Serve(serveCtx, cfg.listen, func(url string) {
+			log.Info("interface ready", "url", url)
+			address <- url
+		})
 	})
+
+	var url string
+	select {
+	case url = <-address:
+	case <-ctx.Done():
+		stopServing()
+		wg.Wait()
+		return serveErr
+	}
+
+	if cfg.window {
+		if err := desktop.Show(ctx, desktop.Window{URL: url, Title: "PRadar", Width: cfg.windowWidth, Height: cfg.windowHeight}); err != nil {
+			log.Error("native window unavailable", "error", err.Error())
+			fmt.Fprintln(os.Stderr, "the interface is reachable at", url)
+			<-ctx.Done()
+		}
+	} else {
+		fmt.Println(url)
+		<-ctx.Done()
+	}
+
+	// Closing the window stops collection and analysis, cancels the running
+	// invocation and removes temporary content, within a bounded grace period.
 	stop()
-	wg.Wait()
-	return err
+	stopServing()
+	if !waitFor(&wg, cfg.shutdownGrace) {
+		log.Warn("owned work did not stop in time", "grace", cfg.shutdownGrace.String())
+	}
+	scavengeCtx, cancelScavenge := context.WithTimeout(context.WithoutCancel(ctx), 5*time.Second)
+	defer cancelScavenge()
+	if err := root.Scavenge(scavengeCtx); err != nil {
+		log.Error("workspace cleanup failed", "error", err.Error())
+	}
+	return serveErr
 }

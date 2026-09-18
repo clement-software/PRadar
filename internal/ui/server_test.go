@@ -35,7 +35,11 @@ type visualizer struct {
 	evaluator *timeline.Evaluator
 }
 
-func start(t *testing.T) *visualizer {
+func start(t *testing.T) *visualizer { return startWith(t, nil) }
+
+// startWith runs the interface with the given browser opener: nil is a browser
+// session, non-nil is the native window.
+func startWith(t *testing.T, openExternal func(string) error) *visualizer {
 	t.Helper()
 	ctx := t.Context()
 	store, err := sqlite.Open(ctx, t.TempDir()+"/pradar.sqlite", time.Now)
@@ -50,7 +54,8 @@ func start(t *testing.T) *visualizer {
 		Lease: time.Minute, Backoff: analyse.ExponentialBackoff(time.Minute), Log: log}
 	evaluator := &timeline.Evaluator{Store: store, Read: store, Profile: profile, Presentation: ui.PresentationVersion, Now: time.Now}
 	server := &ui.Server{Reader: &timeline.Reader{Store: store, Profile: profile, Now: time.Now}, Collector: coll, Evaluator: evaluator, Log: log,
-		ParseRepositoryURL: func(raw string) (string, string, error) { return controlled.Repository, raw, nil }}
+		ParseRepositoryURL: func(raw string) (string, string, error) { return controlled.Repository, raw, nil },
+		OpenExternal:       openExternal}
 	ctx, cancel := context.WithCancel(ctx)
 	t.Cleanup(cancel)
 	ready := make(chan string, 1)
@@ -431,5 +436,52 @@ func TestVisualizer_ShowsTheProductionReadingSurface(t *testing.T) {
 	// Provenance is a secondary section, not the first thing read.
 	if strings.Index(detail, "Analyse") > strings.Index(detail, "Provenance") {
 		t.Error("the analysis must come before its provenance")
+	}
+}
+
+func TestVisualizer_HandsExternalLinksToTheBrowserWhenAWindowHostsThePage(t *testing.T) {
+	t.Parallel()
+	opened := make(chan string, 4)
+	v := startWith(t, func(url string) error { opened <- url; return nil })
+	if _, err := v.coll.Subscribe(t.Context(), collect.SubscribeRequest{Repository: controlled.Repository,
+		HTMLURL: "https://forge.example/controlled/demo", AuthoriseEngine: true}); err != nil {
+		t.Fatal(err)
+	}
+	if err := v.worker.RunOne(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+
+	_, page := v.get("/")
+	if strings.Contains(page, `href="https://forge.example`) {
+		t.Error("a window must not navigate to an external origin")
+	}
+	if !strings.Contains(page, `href="/open?url=https%3A%2F%2Fforge.example`) {
+		t.Fatalf("external links must go through the owned endpoint:\n%s", page)
+	}
+
+	status, body := v.get("/open?url=" + url.QueryEscape("https://forge.example/controlled/demo/pulls/1"))
+	if status != http.StatusOK || !strings.Contains(body, "Retour à la timeline") {
+		t.Fatalf("open: %d %s", status, body)
+	}
+	select {
+	case got := <-opened:
+		if got != "https://forge.example/controlled/demo/pulls/1" {
+			t.Fatalf("browser received %q", got)
+		}
+	default:
+		t.Fatal("the link must reach the browser")
+	}
+
+	// Anything that is not an absolute http(s) link is refused, so the endpoint
+	// cannot be turned into a launcher for arbitrary schemes.
+	for _, hostile := range []string{"javascript:alert(1)", "file:///etc/passwd", "", "/etc/passwd"} {
+		if status, _ := v.get("/open?url=" + url.QueryEscape(hostile)); status != http.StatusBadRequest {
+			t.Errorf("open(%q) = %d, want 400", hostile, status)
+		}
+	}
+	select {
+	case got := <-opened:
+		t.Fatalf("a refused link must not reach the browser: %q", got)
+	default:
 	}
 }

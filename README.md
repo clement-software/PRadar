@@ -65,7 +65,13 @@ collecte jusqu'à une nouvelle autorisation, sans perdre l'historique. Les
 mesures d'usage locales s'exportent depuis `/usage.json`, et ne partent nulle
 part autrement.
 
-Le visualiseur n'écoute que sur 127.0.0.1 ; son URL est imprimée au démarrage.
+Sur macOS, l'application ouvre une fenêtre native sur son propre serveur local.
+`--window=false` imprime l'adresse à ouvrir dans un navigateur, ce qu'utilisent
+les tests et les machines sans interface graphique. Fermer la fenêtre arrête la
+collecte et l'analyse, annule l'invocation en cours et supprime les contenus
+temporaires, dans un délai borné par `--shutdown-grace`.
+
+Le serveur n'écoute que sur 127.0.0.1 ; son URL est imprimée au démarrage.
 Les abonnements s'ajoutent depuis la timeline en collant l'URL Forgejo du dépôt.
 
 ## Workflow de référence

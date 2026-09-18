@@ -40,6 +40,11 @@ type Server struct {
 	Log       *slog.Logger
 	// ParseRepositoryURL maps a Forgejo repository URL to "owner/name" and its canonical URL.
 	ParseRepositoryURL func(raw string) (repository, htmlURL string, err error)
+	// OpenExternal hands a link to the user's browser. When it is set, the
+	// interface routes external links through /open instead of navigating, so
+	// a window never leaves the application's own origin. Nil renders direct
+	// links, which is what a browser session wants.
+	OpenExternal func(url string) error
 
 	templates *template.Template
 }
@@ -51,6 +56,7 @@ func (s *Server) handler() http.Handler {
 		"duration": func(d time.Duration) string { return d.Round(time.Second).String() },
 		"join":     strings.Join,
 		"safeURL":  safeURL,
+		"linkOut":  s.linkOut,
 		"prLink":   prLink,
 	}).ParseFS(content, "templates/*.html"))
 	assets, _ := fs.Sub(content, "assets")
@@ -62,6 +68,7 @@ func (s *Server) handler() http.Handler {
 	mux.HandleFunc("POST /pr/{repository...}", s.action)
 	mux.HandleFunc("POST /subscriptions", s.subscribe)
 	mux.HandleFunc("POST /subscriptions/{repository...}", s.subscriptionAction)
+	mux.HandleFunc("GET /open", s.open)
 	mux.HandleFunc("GET /usage.json", s.usage)
 	mux.HandleFunc("GET /evaluation", s.evaluation)
 	mux.HandleFunc("GET /evaluation/report.json", s.evaluationReport)
@@ -236,6 +243,33 @@ func (s *Server) detail(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	s.render(w, "detail.html", data)
+}
+
+// linkOut renders an external link: directly in a browser session, and
+// through the owned /open endpoint when a window hosts the interface.
+func (s *Server) linkOut(raw string) string {
+	safe := safeURL(raw)
+	if safe == "" || s.OpenExternal == nil {
+		return safe
+	}
+	return "/open?url=" + url.QueryEscape(safe)
+}
+
+// open hands a validated external link to the user's browser and returns the
+// reader to where they were. The window itself never navigates away.
+func (s *Server) open(w http.ResponseWriter, r *http.Request) {
+	target := safeURL(r.URL.Query().Get("url"))
+	if target == "" {
+		http.Error(w, "unsupported link", http.StatusBadRequest)
+		return
+	}
+	if err := s.OpenExternal(target); err != nil {
+		s.Log.Error("open external link", "error", err.Error())
+		http.Error(w, "the link could not be opened", http.StatusInternalServerError)
+		return
+	}
+	w.Header().Set("Content-Type", "text/html; charset=utf-8")
+	_, _ = w.Write([]byte(`<!doctype html><title>PRadar</title><p>Lien ouvert dans votre navigateur. <a href="/">Retour à la timeline</a>.</p>`))
 }
 
 // usage exports the local measurements the user asks for. Nothing leaves the
