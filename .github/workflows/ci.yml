@@ -25,3 +25,15 @@ jobs:
         with:
           version: v2.13.2
       - run: make modernize
+
+  # The native window needs cgo and the macOS frameworks, which the Linux job
+  # cannot compile; this job keeps the application building where it ships.
+  build-macos:
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+      - run: go build ./...
+      - run: go test -race ./internal/adapter/desktop/

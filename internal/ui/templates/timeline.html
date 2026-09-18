@@ -45,7 +45,7 @@
         </div>
         <div class="foot">
           <a href="{{prLink .Ref.Key}}">Lire l'analyse</a>
-          {{with safeURL .HTMLURL}}<a href="{{.}}" rel="noopener noreferrer">Forgejo</a>{{else}}<span class="problem">Lien Forgejo invalide</span>{{end}}
+          {{with linkOut .HTMLURL}}<a href="{{.}}" rel="noopener noreferrer">Forgejo</a>{{else}}<span class="problem">Lien Forgejo invalide</span>{{end}}
         </div>
       </article>
     </li>

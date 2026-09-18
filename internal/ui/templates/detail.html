@@ -5,7 +5,7 @@
     <p class="meta"><span class="repo">{{.Card.Ref.Repository}}</span> #{{.Card.Ref.Number}} · {{.Card.Author}} · mis à jour {{when .Card.UpdatedAt}} · {{.Card.State}}{{if .Archived}} · archivée{{else if .Card.Unread}} · <strong>non lue</strong>{{end}}</p>
     <h1 id="detail-title">{{.Card.Title}}</h1>
     <p class="actions">
-      {{with safeURL .Card.HTMLURL}}<a class="button" href="{{.}}" rel="noopener noreferrer">Ouvrir dans Forgejo</a>{{else}}<span class="problem">Lien Forgejo invalide</span>{{end}}
+      {{with linkOut .Card.HTMLURL}}<a class="button" href="{{.}}" rel="noopener noreferrer">Ouvrir dans Forgejo</a>{{else}}<span class="problem">Lien Forgejo invalide</span>{{end}}
       {{if and .HasCard (not .Archived)}}
       <form method="post" action="{{prLink $.Ref.Key}}"><input type="hidden" name="action" value="read"><button type="submit" class="primary" {{if not .Card.Unread}}disabled{{end}}>Marquer comme lue</button></form>
       <form method="post" action="{{prLink $.Ref.Key}}"><input type="hidden" name="action" value="archive"><button type="submit">Archiver</button></form>
