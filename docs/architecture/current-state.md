@@ -59,8 +59,10 @@ substitutes at the interfaces above.
 
 ## Friction and hot spots
 
-- The demonstrator database has a single schema version and refuses older
-  files instead of migrating; acceptable for disposable evidence only.
+- The database has an ordered migration ladder applied at startup, a copy
+  taken before any migration, and an explicit refusal for a newer or
+  unreadable file. A released migration's statements are frozen; a change to
+  the durable shape is a new step.
 - Retry delay, lease duration and polling are process configuration; there is
   no daily ceiling by product decision.
 

@@ -229,6 +229,21 @@ func runSmoke(args []string) error {
 	}{report.Analysis, report.Usage})
 }
 
+// reportMigration tells the operator what opening the database did, and above
+// all where the backup went when one was taken.
+func reportMigration(log *slog.Logger, report sqlite.MigrationReport) {
+	switch {
+	case report.Created:
+		log.Info("database created", "schema_version", report.ToVersion)
+	case report.Applied():
+		log.Warn("database migrated", "from_version", report.FromVersion, "to_version", report.ToVersion, "backup", report.BackupPath)
+		fmt.Fprintf(os.Stderr, "database migrated from version %d to %d; a copy of the previous database is at %s\n",
+			report.FromVersion, report.ToVersion, report.BackupPath)
+	default:
+		log.Info("database opened", "schema_version", report.ToVersion)
+	}
+}
+
 func defaultDataDir() string {
 	home, _ := os.UserHomeDir()
 	return filepath.Join(home, "Library", "Application Support", "PRadar-demonstrator")
@@ -343,6 +358,7 @@ func runDemonstrator(args []string) error {
 		return err
 	}
 	defer store.Close()
+	reportMigration(log, store.Migration())
 	root, err := workspace.New(filepath.Join(cfg.dataDir, "workspaces"), 8<<20)
 	if err != nil {
 		return err

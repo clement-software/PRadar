@@ -1,9 +1,7 @@
 package sqlite
 
-// schemaVersion is stored in PRAGMA user_version. The demonstrator has no
-// migration ladder: an older file is refused rather than silently rebuilt.
-const schemaVersion = 1
-
+// schema is migration 1: the initial tables. It is frozen — a change to the
+// durable shape is a new migration in the ladder, never an edit here.
 const schema = `
 CREATE TABLE IF NOT EXISTS subscriptions (
   repository       TEXT PRIMARY KEY,

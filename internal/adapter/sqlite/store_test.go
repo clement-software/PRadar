@@ -47,6 +47,10 @@ type harness struct {
 	path  string
 }
 
+func subscriptionFixture() collect.Subscription {
+	return collect.Subscription{Repository: ref.Repository, HTMLURL: "https://forge.test/acme/widgets", Active: true}
+}
+
 func open(t *testing.T) *harness {
 	t.Helper()
 	h := &harness{t: t, ctx: t.Context(), clock: newClock(), path: t.TempDir() + "/pradar.sqlite"}
