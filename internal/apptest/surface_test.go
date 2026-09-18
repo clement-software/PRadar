@@ -42,6 +42,7 @@ func (c *clock) Advance(d time.Duration) {
 // fakeForge is the controlled Forgejo substitute.
 type fakeForge struct {
 	mu       sync.Mutex
+	lists    int
 	checkErr error
 	listErr  error
 	open     []pullrequest.Observation
@@ -51,9 +52,18 @@ type fakeForge struct {
 
 func (f *fakeForge) CheckRepository(context.Context, string) error { return f.checkErr }
 
+// listed is how many times the collector asked the forge for open pull
+// requests: one per complete reconciliation of one abonnement.
+func (f *fakeForge) listed() int {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return f.lists
+}
+
 func (f *fakeForge) ListOpenPullRequests(context.Context, string) ([]pullrequest.Observation, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
+	f.lists++
 	if f.listErr != nil {
 		return nil, f.listErr
 	}
@@ -803,7 +813,7 @@ func TestReconcile_AChangedEngineBlocksUntilReauthorised(t *testing.T) {
 	}
 }
 
-func TestPoll_WakingReconcilesOnceWithoutWaitingForATick(t *testing.T) {
+func TestPoll_WakingReconcilesWithoutWaitingForATick(t *testing.T) {
 	t.Parallel()
 	f := newFixture(t)
 	f.subscribe(collect.ImportNone)
@@ -814,23 +824,51 @@ func TestPoll_WakingReconcilesOnceWithoutWaitingForATick(t *testing.T) {
 	ctx, cancel := context.WithCancel(f.ctx)
 	done := make(chan struct{})
 	go func() { defer close(done); f.collector.Poll(ctx, time.Hour) }()
-	waitFor(t, func() bool { return !f.status().LastSyncAt.IsZero() }) // launch reconciliation
 
-	// The machine slept: a tick is pending and the resume fires. Exactly one
-	// catch-up reconciliation must happen, well before the next hour.
+	launched := f.forge.listed()
+	waitFor(t, func() bool { return f.forge.listed() > launched })
+
+	// The next tick is an hour away, so only the resume can explain a second
+	// reconciliation of the new head.
 	f.forge.set(observation(42, "sha-2", f.clock.Now().Add(time.Minute)))
+	f.clock.Advance(2 * time.Hour)
+	wakes <- f.clock.Now()
+	waitFor(t, func() bool { return f.status().Pending == 1 })
+	cancel()
+	<-done
+}
+
+func TestPoll_ASleepCostsOneCatchUp(t *testing.T) {
+	t.Parallel()
+	f := newFixture(t)
+	f.subscribe(collect.ImportNone)
+	ticks := make(chan time.Time, 1)
+	wakes := make(chan time.Time, 1)
+	f.collector.Tick = func(time.Duration) <-chan time.Time { return ticks }
+	f.collector.Wakes = wakes
+
+	// Subscribing already reconciled once; count from there.
+	baseline := f.forge.listed()
+
+	// What a sleeping machine leaves behind: the ticker fired while the process
+	// was frozen, and the resume was detected. Both are already waiting when
+	// the loop next looks, and they mean the same complete reconciliation.
 	f.clock.Advance(2 * time.Hour)
 	ticks <- f.clock.Now()
 	wakes <- f.clock.Now()
-	waitFor(t, func() bool { return f.status().Pending == 1 })
 
-	f.forge.set(observation(42, "sha-3", f.clock.Now().Add(2*time.Minute)))
-	f.clock.Advance(time.Minute)
-	select {
-	case <-ticks:
-		t.Fatal("the pending tick must have been consumed by the wake")
-	default:
+	ctx, cancel := context.WithCancel(f.ctx)
+	done := make(chan struct{})
+	go func() { defer close(done); f.collector.Poll(ctx, time.Hour) }()
+	waitFor(t, func() bool { return f.forge.listed() >= baseline+2 }) // launch, then the catch-up
+	settle()
+	if listed := f.forge.listed() - baseline; listed != 2 {
+		t.Fatalf("polling reconciled %d times, want the launch plus one catch-up", listed)
 	}
 	cancel()
 	<-done
 }
+
+// settle gives a racing goroutine time to do the thing a test asserts it will
+// not do.
+func settle() { time.Sleep(150 * time.Millisecond) }

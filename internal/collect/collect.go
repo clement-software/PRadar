@@ -272,13 +272,21 @@ func (c *Collector) Poll(ctx context.Context, interval time.Duration) {
 			return
 		case <-ticks:
 		case <-c.Wakes:
-			// A sleep usually leaves a tick pending as well; dropping it keeps
-			// waking up to exactly one catch-up reconciliation.
-			select {
-			case <-ticks:
-			default:
-			}
 			c.Log.Info("machine woke, reconciling")
 		}
+		// A sleep leaves a tick pending as well, and a tick may arrive beside a
+		// resume. Both mean the same complete reconciliation, so anything else
+		// already waiting is dropped: waking up costs exactly one catch-up,
+		// whichever of the two the select happened to pick.
+		drain(ticks)
+		drain(c.Wakes)
+	}
+}
+
+// drain removes one pending value from a channel, if any.
+func drain(c <-chan time.Time) {
+	select {
+	case <-c:
+	default:
 	}
 }
