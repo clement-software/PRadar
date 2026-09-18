@@ -2,6 +2,7 @@ package ui_test
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"log/slog"
@@ -96,7 +97,7 @@ func TestVisualizer_ShowsCarteAndDetailAfterControlledAnalysis(t *testing.T) {
 	if status, body := v.get("/"); status != http.StatusOK || !strings.Contains(body, "Aucune carte") {
 		t.Fatalf("empty timeline: %d %s", status, body)
 	}
-	if _, err := v.coll.Subscribe(t.Context(), collect.SubscribeRequest{Repository: controlled.Repository, HTMLURL: "https://forge.example/controlled/demo"}); err != nil {
+	if _, err := v.coll.Subscribe(t.Context(), collect.SubscribeRequest{Repository: controlled.Repository, HTMLURL: "https://forge.example/controlled/demo", AuthoriseEngine: true}); err != nil {
 		t.Fatal(err)
 	}
 	if err := v.worker.RunOne(t.Context()); err != nil {
@@ -287,7 +288,7 @@ func TestVisualizer_EvaluationScorecardAndReport(t *testing.T) {
 	if status, body := v.get("/evaluation"); status != http.StatusOK || !strings.Contains(body, "Aucun corpus") || strings.Contains(body, "Verdict :") {
 		t.Fatalf("evaluation without corpus must show the hint and no empty report: %d %s", status, body)
 	}
-	if _, err := v.coll.Subscribe(t.Context(), collect.SubscribeRequest{Repository: controlled.Repository, HTMLURL: "https://forge.example/controlled/demo"}); err != nil {
+	if _, err := v.coll.Subscribe(t.Context(), collect.SubscribeRequest{Repository: controlled.Repository, HTMLURL: "https://forge.example/controlled/demo", AuthoriseEngine: true}); err != nil {
 		t.Fatal(err)
 	}
 	if err := v.worker.RunOne(t.Context()); err != nil {
@@ -328,5 +329,45 @@ func TestVisualizer_EvaluationScorecardAndReport(t *testing.T) {
 	_, report := v.get("/evaluation/report.json")
 	if !strings.Contains(report, `"verdict": "incomplete"`) || !strings.Contains(report, `"scored": 1`) || !strings.Contains(report, `"answers"`) || !strings.Contains(report, `"presentation": "visualizer-v1"`) || strings.Contains(report, "Transient 429") {
 		t.Fatalf("report export: %s", report)
+	}
+}
+
+func TestVisualizer_AuthorisesTheEngineAndExportsUsage(t *testing.T) {
+	t.Parallel()
+	v := start(t)
+	engine := collect.EngineFingerprint(profile)
+	_, page := v.get("/")
+	if !strings.Contains(page, "autorise "+engine) || !strings.Contains(page, `name="authorise_engine"`) {
+		t.Fatalf("the subscribe form must ask for the engine authorisation:\n%s", page)
+	}
+
+	// Subscribing without ticking the box leaves a blocked abonnement and an
+	// action to authorise the configured engine.
+	if status := v.post("/subscriptions", url.Values{"url": {"https://forge.example/controlled/demo"}, "import": {"none"}}); status != http.StatusSeeOther {
+		t.Fatalf("subscribe status %d", status)
+	}
+	_, page = v.get("/")
+	if !strings.Contains(page, "not authorised") || !strings.Contains(page, "Autoriser "+engine) {
+		t.Fatalf("a blocked abonnement must offer to authorise:\n%s", page)
+	}
+	if status := v.post("/subscriptions/"+controlled.Repository, url.Values{"action": {"authorise"}}); status != http.StatusSeeOther {
+		t.Fatalf("authorise status %d", status)
+	}
+	_, page = v.get("/")
+	if strings.Contains(page, "not authorised") || strings.Contains(page, "Autoriser "+engine) {
+		t.Fatalf("the authorised abonnement must stop asking:\n%s", page)
+	}
+
+	if err := v.worker.RunOne(t.Context()); err != nil && !errors.Is(err, analyse.ErrNoWork) {
+		t.Fatal(err)
+	}
+	status, export := v.get("/usage.json")
+	if status != http.StatusOK || !strings.HasPrefix(strings.TrimSpace(export), "[") {
+		t.Fatalf("usage export: %d %s", status, export)
+	}
+	for _, forbidden := range []string{"token", "Transient 429", "body"} {
+		if strings.Contains(export, forbidden) {
+			t.Errorf("usage export leaks %q", forbidden)
+		}
 	}
 }

@@ -24,6 +24,7 @@ import (
 	"github.com/clement-software/PRadar/internal/adapter/forgejo"
 	"github.com/clement-software/PRadar/internal/adapter/keychain"
 	"github.com/clement-software/PRadar/internal/adapter/sqlite"
+	"github.com/clement-software/PRadar/internal/adapter/wake"
 	"github.com/clement-software/PRadar/internal/adapter/workspace"
 	"github.com/clement-software/PRadar/internal/analyse"
 	"github.com/clement-software/PRadar/internal/collect"
@@ -367,20 +368,24 @@ func runDemonstrator(args []string) error {
 		return fmt.Errorf("scavenge workspaces: %w", err)
 	}
 
-	collector := &collect.Collector{Forge: forge, Store: store, Profile: profile, Debounce: cfg.debounce, Now: now, Log: log}
+	waker := &wake.Detector{}
+	collector := &collect.Collector{Forge: forge, Store: store, Profile: profile, Debounce: cfg.debounce, Now: now, Log: log,
+		Wakes: waker.Wakes()}
 	worker := &analyse.Worker{Store: store, Analyzer: analyzer, Workspace: root, Content: forge, Now: now, Lease: cfg.lease,
 		Backoff: analyse.ExponentialBackoff(time.Minute), Log: log}
 	collector.Interrupt = worker.Interrupt
 	reader := &timeline.Reader{Store: store, Profile: profile, Now: now}
 	evaluator := &timeline.Evaluator{Store: store, Read: store, Profile: profile, Presentation: ui.PresentationVersion, Now: now}
 	if cfg.controlled {
-		if _, err := collector.Subscribe(ctx, collect.SubscribeRequest{Repository: controlled.Repository, HTMLURL: "https://forge.example/" + controlled.Repository, Import: collect.ImportTen}); err != nil {
+		if _, err := collector.Subscribe(ctx, collect.SubscribeRequest{Repository: controlled.Repository,
+			HTMLURL: "https://forge.example/" + controlled.Repository, Import: collect.ImportTen, AuthoriseEngine: true}); err != nil {
 			return err
 		}
 	}
 
 	server := &ui.Server{Reader: reader, Collector: collector, Evaluator: evaluator, Log: log, ParseRepositoryURL: instance.ParseRepositoryURL}
 	var wg sync.WaitGroup
+	wg.Go(func() { waker.Run(ctx) })
 	wg.Go(func() { collector.Poll(ctx, cfg.pollInterval) })
 	wg.Go(func() { worker.Run(ctx, 2*time.Second) })
 	err = server.Serve(ctx, cfg.listen, func(url string) {

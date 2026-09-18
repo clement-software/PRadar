@@ -13,6 +13,8 @@ type ReadModel interface {
 	ListCards(ctx context.Context) ([]Card, error)
 	GetDetail(ctx context.Context, ref pullrequest.Ref) (Detail, error)
 	Status(ctx context.Context) (Status, error)
+	// UsageRecords returns every analysis measurement, oldest first.
+	UsageRecords(ctx context.Context) ([]UsageRecord, error)
 	MarkRead(ctx context.Context, ref pullrequest.Ref) error
 	Archive(ctx context.Context, ref pullrequest.Ref) error
 	Replay(ctx context.Context, ref pullrequest.Ref, profile pullrequest.Profile, notBefore time.Time) error
@@ -51,6 +53,12 @@ func (f Filter) Matches(card Card) bool {
 // Detail returns the full reading view of one pull request.
 func (t *Reader) Detail(ctx context.Context, ref pullrequest.Ref) (Detail, error) {
 	return t.Store.GetDetail(ctx, ref)
+}
+
+// Usage returns the local usage measurements for a manual export. Nothing is
+// ever sent anywhere; the user asks for this.
+func (t *Reader) Usage(ctx context.Context) ([]UsageRecord, error) {
+	return t.Store.UsageRecords(ctx)
 }
 
 // Status reports synchronisation and work health.

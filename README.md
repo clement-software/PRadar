@@ -59,6 +59,12 @@ go run ./cmd/pradar corpus candidates --instance https://forge.example owner/rep
 #   garder 20 éléments (2 ou 3 dépôts), remplir "category" (code|ci|infra) et "reason", vérifier "size" et "authorship"
 go run ./cmd/pradar corpus freeze manifest.json
 
+Un abonnement n'est actif que si vous autorisez explicitement le moteur
+configuré à lire le contenu du dépôt. Changer de moteur ou de modèle suspend la
+collecte jusqu'à une nouvelle autorisation, sans perdre l'historique. Les
+mesures d'usage locales s'exportent depuis `/usage.json`, et ne partent nulle
+part autrement.
+
 Le visualiseur n'écoute que sur 127.0.0.1 ; son URL est imprimée au démarrage.
 Les abonnements s'ajoutent depuis la timeline en collant l'URL Forgejo du dépôt.
 

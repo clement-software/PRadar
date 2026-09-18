@@ -204,7 +204,8 @@ func (f *fixture) wire() {
 
 func (f *fixture) subscribe(mode collect.ImportMode, excluded ...string) collect.Subscription {
 	f.t.Helper()
-	subscription, err := f.collector.Subscribe(f.ctx, collect.SubscribeRequest{Repository: repo, HTMLURL: "https://forge.test/" + repo, Import: mode, ExcludedAuthors: excluded})
+	subscription, err := f.collector.Subscribe(f.ctx, collect.SubscribeRequest{Repository: repo, HTMLURL: "https://forge.test/" + repo,
+		Import: mode, ExcludedAuthors: excluded, AuthoriseEngine: true})
 	if err != nil {
 		f.t.Fatal(err)
 	}
@@ -672,7 +673,7 @@ func TestWorker_SupersedesWhenHeadMovedBeforeFetch(t *testing.T) {
 func TestSubscribe_RejectsUnknownImportModeBeforePersisting(t *testing.T) {
 	t.Parallel()
 	f := newFixture(t)
-	if _, err := f.collector.Subscribe(f.ctx, collect.SubscribeRequest{Repository: repo, Import: "everything"}); err == nil {
+	if _, err := f.collector.Subscribe(f.ctx, collect.SubscribeRequest{Repository: repo, Import: "everything", AuthoriseEngine: true}); err == nil {
 		t.Fatal("unknown import mode accepted")
 	}
 	if _, err := f.store.GetSubscription(f.ctx, repo); !errors.Is(err, collect.ErrNotFound) {
@@ -734,4 +735,102 @@ func TestWorker_RepeatedInterruptionsBecomeUnavailable(t *testing.T) {
 	if len(cards) != 1 || cards[0].Analysis.Status != pullrequest.AnalysisUnavailable {
 		t.Fatalf("exhausted attempts must publish analyse indisponible: %+v", cards)
 	}
+}
+
+func TestSubscribe_RequiresTheUserToAuthoriseTheEngine(t *testing.T) {
+	t.Parallel()
+	f := newFixture(t)
+	subscription, err := f.collector.Subscribe(f.ctx, collect.SubscribeRequest{Repository: repo, HTMLURL: "https://forge.test/" + repo, Import: collect.ImportTen})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if subscription.Active || !strings.Contains(subscription.BlockedReason, "not authorised") {
+		t.Fatalf("an unauthorised engine must leave the abonnement blocked: %+v", subscription)
+	}
+	if s := f.status(); len(s.Blocked) != 1 || s.Blocked[0].AuthorisedEngine != "" {
+		t.Fatalf("status = %+v", s)
+	}
+	if err := f.collector.ReconcileAll(f.ctx); err != nil {
+		t.Fatal(err)
+	}
+	if s := f.status(); s.Pending != 0 {
+		t.Fatal("a blocked abonnement must not collect")
+	}
+
+	// The user authorises the configured engine: collection resumes without
+	// recreating the abonnement.
+	if err := f.collector.AuthoriseEngine(f.ctx, repo); err != nil {
+		t.Fatal(err)
+	}
+	if err := f.collector.ReconcileAll(f.ctx); err != nil {
+		t.Fatal(err)
+	}
+	status := f.status()
+	if len(status.Blocked) != 0 || status.Pending != 1 || !status.Repositories[0].Active {
+		t.Fatalf("status after authorisation = %+v", status)
+	}
+}
+
+func TestReconcile_AChangedEngineBlocksUntilReauthorised(t *testing.T) {
+	t.Parallel()
+	f := newFixture(t)
+	f.subscribe(collect.ImportTen)
+	f.drain()
+
+	// The operator switches model; the earlier authorisation no longer applies.
+	changed := profile
+	changed.Model = "another-model"
+	f.collector.Profile = changed
+	f.forge.set(observation(42, "sha-2", f.clock.Now().Add(time.Minute)))
+	if err := f.collector.ReconcileAll(f.ctx); err != nil {
+		t.Fatal(err)
+	}
+	status := f.status()
+	if len(status.Blocked) != 1 || !strings.Contains(status.Blocked[0].BlockedReason, "another-model") || status.Pending != 0 {
+		t.Fatalf("a changed engine must block collection: %+v", status)
+	}
+	if len(f.cards(timeline.Filter{})) != 1 {
+		t.Fatal("history and the visible carte must survive the block")
+	}
+	if err := f.collector.AuthoriseEngine(f.ctx, repo); err != nil {
+		t.Fatal(err)
+	}
+	if err := f.collector.ReconcileAll(f.ctx); err != nil {
+		t.Fatal(err)
+	}
+	if s := f.status(); s.Pending != 1 || len(s.Blocked) != 0 {
+		t.Fatalf("status after re-authorisation = %+v", s)
+	}
+}
+
+func TestPoll_WakingReconcilesOnceWithoutWaitingForATick(t *testing.T) {
+	t.Parallel()
+	f := newFixture(t)
+	f.subscribe(collect.ImportNone)
+	ticks := make(chan time.Time, 1)
+	wakes := make(chan time.Time, 1)
+	f.collector.Tick = func(time.Duration) <-chan time.Time { return ticks }
+	f.collector.Wakes = wakes
+	ctx, cancel := context.WithCancel(f.ctx)
+	done := make(chan struct{})
+	go func() { defer close(done); f.collector.Poll(ctx, time.Hour) }()
+	waitFor(t, func() bool { return !f.status().LastSyncAt.IsZero() }) // launch reconciliation
+
+	// The machine slept: a tick is pending and the resume fires. Exactly one
+	// catch-up reconciliation must happen, well before the next hour.
+	f.forge.set(observation(42, "sha-2", f.clock.Now().Add(time.Minute)))
+	f.clock.Advance(2 * time.Hour)
+	ticks <- f.clock.Now()
+	wakes <- f.clock.Now()
+	waitFor(t, func() bool { return f.status().Pending == 1 })
+
+	f.forge.set(observation(42, "sha-3", f.clock.Now().Add(2*time.Minute)))
+	f.clock.Advance(time.Minute)
+	select {
+	case <-ticks:
+		t.Fatal("the pending tick must have been consumed by the wake")
+	default:
+	}
+	cancel()
+	<-done
 }

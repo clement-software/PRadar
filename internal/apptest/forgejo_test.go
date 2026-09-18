@@ -64,7 +64,8 @@ func TestCollector_ImportsThroughRealForgejoClient(t *testing.T) {
 	t.Cleanup(func() { _ = store.Close() })
 	collector := &collect.Collector{Forge: client, Store: store, Profile: profile, Debounce: 10 * time.Minute,
 		Now: func() time.Time { return now }, Log: slog.New(slog.NewTextHandler(io.Discard, nil))}
-	subscription, err := collector.Subscribe(t.Context(), collect.SubscribeRequest{Repository: "acme/widgets", HTMLURL: server.URL + "/acme/widgets", ExcludedAuthors: []string{"agent[bot]"}})
+	subscription, err := collector.Subscribe(t.Context(), collect.SubscribeRequest{Repository: "acme/widgets",
+		HTMLURL: server.URL + "/acme/widgets", ExcludedAuthors: []string{"agent[bot]"}, AuthoriseEngine: true})
 	if err != nil || !subscription.Active {
 		t.Fatalf("Subscribe = %+v, %v", subscription, err)
 	}

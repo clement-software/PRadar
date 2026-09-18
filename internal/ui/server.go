@@ -62,6 +62,7 @@ func (s *Server) handler() http.Handler {
 	mux.HandleFunc("POST /pr/{repository...}", s.action)
 	mux.HandleFunc("POST /subscriptions", s.subscribe)
 	mux.HandleFunc("POST /subscriptions/{repository...}", s.subscriptionAction)
+	mux.HandleFunc("GET /usage.json", s.usage)
 	mux.HandleFunc("GET /evaluation", s.evaluation)
 	mux.HandleFunc("GET /evaluation/report.json", s.evaluationReport)
 	mux.HandleFunc("POST /evaluation/score/{repository...}", s.score)
@@ -122,6 +123,7 @@ type page struct {
 	Risks       []string
 	States      []string
 	Importances []string
+	Engine      string // the engine configuration a user authorises
 	Ref         pullrequest.Ref
 	Progress    timeline.Progress
 	CorpusItem  *evaluation.Item
@@ -163,7 +165,8 @@ func (s *Server) timeline(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	data := page{Title: "Timeline", Status: status, Filter: filter, Notice: q.Get("notice"), Problem: q.Get("problem"),
-		States: []string{"open", "closed", "merged"}, Importances: []string{"low", "medium", "high"}}
+		States: []string{"open", "closed", "merged"}, Importances: []string{"low", "medium", "high"},
+		Engine: collect.EngineFingerprint(s.Collector.Profile)}
 	seenRepo, seenRisk := map[string]bool{}, map[string]bool{}
 	for _, card := range all {
 		if !seenRepo[card.Ref.Repository] {
@@ -232,6 +235,21 @@ func (s *Server) detail(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	s.render(w, "detail.html", data)
+}
+
+// usage exports the local measurements the user asks for. Nothing leaves the
+// machine unless this endpoint is called.
+func (s *Server) usage(w http.ResponseWriter, r *http.Request) {
+	records, err := s.Reader.Usage(r.Context())
+	if err != nil {
+		s.fail(w, err)
+		return
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.Header().Set("Content-Disposition", `attachment; filename="pradar-usage.json"`)
+	encoder := json.NewEncoder(w)
+	encoder.SetIndent("", "  ")
+	_ = encoder.Encode(records)
 }
 
 func (s *Server) evaluation(w http.ResponseWriter, r *http.Request) {
@@ -335,6 +353,7 @@ func (s *Server) subscribe(w http.ResponseWriter, r *http.Request) {
 	}
 	subscription, err := s.Collector.Subscribe(r.Context(), collect.SubscribeRequest{
 		Repository: repository, HTMLURL: htmlURL, Import: collect.ImportMode(r.FormValue("import")), ExcludedAuthors: excluded,
+		AuthoriseEngine: r.FormValue("authorise_engine") == "on",
 	})
 	notice := "Abonnement actif : " + repository
 	if err == nil && subscription.BlockedReason != "" {
@@ -350,6 +369,8 @@ func (s *Server) subscriptionAction(w http.ResponseWriter, r *http.Request) {
 		notice string
 	)
 	switch r.FormValue("action") {
+	case "authorise":
+		err, notice = s.Collector.AuthoriseEngine(r.Context(), repository), "Moteur autorisé, collecte reprise"
 	case "unsubscribe":
 		err, notice = s.Collector.Unsubscribe(r.Context(), repository), "Désabonnement effectué, historique conservé"
 	case "delete":

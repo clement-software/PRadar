@@ -145,6 +145,7 @@ FROM analysis_jobs`, now).Scan(&status.Pending, &status.Running, &status.Retryin
 		repository := timeline.RepositoryStatus{
 			Repository: subscription.Repository, Active: subscription.Active,
 			BlockedReason: subscription.BlockedReason, LastSyncAt: subscription.LastSyncAt,
+			AuthorisedEngine: subscription.AuthorisedEngine,
 		}
 		status.Repositories = append(status.Repositories, repository)
 		if repository.BlockedReason != "" {
@@ -155,6 +156,35 @@ FROM analysis_jobs`, now).Scan(&status.Pending, &status.Running, &status.Retryin
 		}
 	}
 	return status, nil
+}
+
+// UsageRecords lists every analysis measurement, oldest first.
+func (s *Store) UsageRecords(ctx context.Context) ([]timeline.UsageRecord, error) {
+	rows, err := s.db.QueryContext(ctx, `
+SELECT a.identity, a.pr_key, a.head_sha, a.status, a.provenance_json FROM analyses a ORDER BY a.id`)
+	if err != nil {
+		return nil, fmt.Errorf("list usage records: %w", err)
+	}
+	defer rows.Close()
+	records := []timeline.UsageRecord{}
+	for rows.Next() {
+		var (
+			record     timeline.UsageRecord
+			provenance string
+		)
+		if err := rows.Scan(&record.Identity, &record.PullRequest, &record.HeadSHA, &record.Status, &provenance); err != nil {
+			return nil, fmt.Errorf("scan usage record: %w", err)
+		}
+		var decoded pullrequest.Provenance
+		if err := json.Unmarshal([]byte(provenance), &decoded); err != nil {
+			return nil, fmt.Errorf("decode provenance: %w", err)
+		}
+		record.Profile, record.Attempt = decoded.Profile, decoded.Attempt
+		record.StartedAt, record.Duration = decoded.StartedAt, decoded.Duration
+		record.Usage, record.Failure = decoded.Usage, decoded.Failure
+		records = append(records, record)
+	}
+	return records, rows.Err()
 }
 
 func (s *Store) setReadState(ctx context.Context, ref pullrequest.Ref, archived bool, kind string) error {

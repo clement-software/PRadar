@@ -31,10 +31,17 @@
 
 <section aria-labelledby="subscriptions-title" class="subscriptions">
   <h2 id="subscriptions-title">Abonnements</h2>
+  <p class="meta">Moteur configuré : {{.Engine}} · <a href="/usage.json">Exporter les mesures d'usage</a></p>
   <ul>
   {{range .Status.Repositories}}
     <li>
       <span>{{.Repository}}{{if not .Active}} (arrêté){{end}}{{if .BlockedReason}} — bloqué : {{.BlockedReason}}{{end}}</span>
+      {{if ne .AuthorisedEngine $.Engine}}
+      <form method="post" action="/subscriptions/{{.Repository}}">
+        <input type="hidden" name="action" value="authorise">
+        <button type="submit">Autoriser {{$.Engine}} à analyser ce dépôt</button>
+      </form>
+      {{end}}
       {{if .Active}}<form method="post" action="/subscriptions/{{.Repository}}"><input type="hidden" name="action" value="unsubscribe"><button type="submit">Se désabonner</button></form>{{end}}
       <form method="post" action="/subscriptions/{{.Repository}}" class="danger">
         <input type="hidden" name="action" value="delete">
@@ -53,6 +60,7 @@
       <label><input type="radio" name="import" value="all"> Toutes</label>
     </fieldset>
     <label>Auteurs exclus (séparés par des virgules) <input name="excluded_authors"></label>
+    <label><input type="checkbox" name="authorise_engine"> J'autorise {{.Engine}} à lire le contenu de ce dépôt</label>
     <button type="submit">S'abonner</button>
   </form>
 </section>
