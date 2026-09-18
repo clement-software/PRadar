@@ -53,6 +53,22 @@
   </ol>
 </section>
 
+{{if .Pending}}
+<section class="panel" aria-labelledby="pending-title">
+  <h2 id="pending-title">En attente d'analyse</h2>
+  <p class="meta">Une version observée est regroupée pendant l'anti-rebond avant d'être analysée, pour n'analyser que la plus récente d'une rafale de commits. Ces pull requests n'ont donc pas encore de carte.</p>
+  <ul>
+  {{range .Pending}}
+    <li>
+      <span><strong>{{.Ref.Repository}}</strong> #{{.Ref.Number}} · {{.Title}}{{with .Author}} · {{.}}{{end}}</span>
+      <span class="meta">{{if .Running}}analyse en cours{{else if .Retrying}}nouvelle tentative {{add .Attempt 1}} prévue {{when .DueAt}} après un échec technique{{else}}analyse prévue {{when .DueAt}}{{end}}</span>
+      {{with linkOut .HTMLURL}}<a href="{{.}}" rel="noopener noreferrer">Forgejo</a>{{end}}
+    </li>
+  {{end}}
+  </ul>
+</section>
+{{end}}
+
 <section class="panel" aria-labelledby="subscriptions-title">
   <h2 id="subscriptions-title">Abonnements</h2>
   <p class="meta">Moteur configuré : {{.Engine}} · <a href="/usage.json">Exporter les mesures d'usage</a></p>

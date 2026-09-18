@@ -506,3 +506,48 @@ func TestVisualizer_GuidesTheFirstRunAndShowsTheVersion(t *testing.T) {
 		t.Error("the first-run hint must disappear once a repository is followed")
 	}
 }
+
+func TestVisualizer_ShowsWhatIsWaitingToBeAnalysed(t *testing.T) {
+	t.Parallel()
+	v := start(t)
+	v.coll.Debounce = time.Hour // the anti-rebond is what makes waiting visible
+	if _, err := v.coll.Subscribe(t.Context(), collect.SubscribeRequest{Repository: controlled.Repository,
+		HTMLURL: "https://forge.example/controlled/demo", AuthoriseEngine: true}); err != nil {
+		t.Fatal(err)
+	}
+
+	_, page := v.get("/")
+	if !strings.Contains(page, "En attente d'analyse") || !strings.Contains(page, "anti-rebond") {
+		t.Fatalf("waiting must be explained, not just counted:\n%s", page)
+	}
+	for _, want := range []string{
+		"controlled/demo</strong> #1",     // which pull request is waiting
+		"Add retry with jittered backoff", // and what it is
+		"analyse prévue",                  // when it will be analysed
+		"prochaine analyse",               // the same answer in the status strip
+		">Forgejo<",                       // reachable meanwhile
+	} {
+		if !strings.Contains(page, want) {
+			t.Errorf("the waiting list lacks %q", want)
+		}
+	}
+	if strings.Contains(page, `<li class="card`) {
+		t.Error("a waiting version is not a carte")
+	}
+
+	// Once the analysis is published, the version leaves the waiting list and
+	// becomes a carte.
+	if err := v.store.MakeDue(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+	if err := v.worker.RunOne(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+	_, page = v.get("/")
+	if strings.Contains(page, "En attente d'analyse") {
+		t.Error("an analysed version must leave the waiting list")
+	}
+	if strings.Count(page, `<li class="card`) != 1 {
+		t.Error("the analysed version must become a carte")
+	}
+}

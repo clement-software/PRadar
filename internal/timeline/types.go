@@ -93,13 +93,30 @@ type UsageRecord struct {
 	Failure     string                     `json:"failure,omitempty"`
 }
 
+// PendingVersion is a version waiting for its analysis: the anti-rebond has
+// not elapsed, the worker has not reached it yet, or it is running now.
+type PendingVersion struct {
+	Ref      pullrequest.Ref
+	Title    string
+	Author   string
+	HeadSHA  string
+	HTMLURL  string
+	DueAt    time.Time
+	Attempt  int  // attempts already made; zero before the first
+	Running  bool // an analysis is under way right now
+	Retrying bool // an earlier attempt failed and another is scheduled
+}
+
 // Status summarises collection and analysis health for the interface.
 type Status struct {
-	LastSyncAt   time.Time
-	Pending      int
-	Running      int
-	Retrying     int
-	Unavailable  int
-	Blocked      []RepositoryStatus
-	Repositories []RepositoryStatus
+	LastSyncAt time.Time
+	// NextAnalysisAt is when the earliest waiting version becomes eligible;
+	// zero when nothing is waiting.
+	NextAnalysisAt time.Time
+	Pending        int
+	Running        int
+	Retrying       int
+	Unavailable    int
+	Blocked        []RepositoryStatus
+	Repositories   []RepositoryStatus
 }
