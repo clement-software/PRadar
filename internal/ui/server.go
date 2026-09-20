@@ -47,6 +47,9 @@ type Server struct {
 	OpenExternal func(url string) error
 	// Version is the application version shown in the interface.
 	Version string
+	// AnalysisLanguage is the language the analyses are written in, shown so
+	// the reader knows what to expect and why a replay would differ.
+	AnalysisLanguage string
 
 	templates *template.Template
 }
@@ -136,6 +139,7 @@ type page struct {
 	Importances []string
 	Pending     []timeline.PendingVersion
 	Engine      string // the engine configuration a user authorises
+	Language    string // the language the analyses are written in
 	Version     string // the application version
 	Ref         pullrequest.Ref
 	Progress    timeline.Progress
@@ -179,7 +183,7 @@ func (s *Server) timeline(w http.ResponseWriter, r *http.Request) {
 	}
 	data := page{Title: "Timeline", View: "timeline", Version: s.Version, Status: status, Filter: filter, Notice: q.Get("notice"), Problem: q.Get("problem"),
 		States: []string{"open", "closed", "merged"}, Importances: []string{"low", "medium", "high"},
-		Engine: collect.EngineFingerprint(s.Collector.Profile)}
+		Engine: collect.EngineFingerprint(s.Collector.Profile), Language: s.AnalysisLanguage}
 	seenRepo, seenRisk := map[string]bool{}, map[string]bool{}
 	for _, card := range all {
 		if !seenRepo[card.Ref.Repository] {

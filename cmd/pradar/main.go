@@ -4,6 +4,7 @@
 package main
 
 import (
+	"cmp"
 	"context"
 	"encoding/json"
 	"errors"
@@ -159,6 +160,7 @@ func runSmoke(args []string) error {
 	pull := fs.String("pull-request", "", "pull request to analyse, as owner/name#number")
 	controlledForge := fs.Bool("controlled-forge", false, "use the fixture pull request instead of a Forgejo instance")
 	model := fs.String("model", os.Getenv("PRADAR_CLAUDE_MODEL"), "the Claude model to validate")
+	language := fs.String("analysis-language", cmp.Or(os.Getenv("PRADAR_ANALYSIS_LANGUAGE"), string(claudecli.French)), "language the analysis is written in: fr or en")
 	claude := fs.String("claude", "claude", "Claude CLI executable")
 	timeout := fs.Duration("analysis-timeout", 10*time.Minute, "maximum duration of the Claude invocation")
 	maxTurns := fs.Int("max-turns", 12, "maximum agentic turns")
@@ -168,6 +170,9 @@ func runSmoke(args []string) error {
 	}
 	if *model == "" {
 		return errors.New("--model is required")
+	}
+	if !claudecli.Language(*language).Valid() {
+		return fmt.Errorf("--analysis-language: %q is not a language PRadar writes; use fr or en", *language)
 	}
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
@@ -211,9 +216,9 @@ func runSmoke(args []string) error {
 	}
 	smoke := &analyse.Smoke{
 		Forge: forge, Workspace: root, Now: time.Now, Log: log,
-		Analyzer: &claudecli.Analyzer{Executable: claudePath, Model: *model, Timeout: *timeout,
+		Analyzer: &claudecli.Analyzer{Executable: claudePath, Model: *model, Language: claudecli.Language(*language), Timeout: *timeout,
 			MaxOutput: 16 << 20, MaxTurns: *maxTurns, MaxBudgetUSD: *maxBudget, Env: claudecli.MinimalEnv()},
-		Profile: pullrequest.Profile{PromptVersion: claudecli.PromptVersion, SkillVersion: claudecli.SkillVersion, Engine: claudecli.Engine, Model: *model},
+		Profile: pullrequest.Profile{PromptVersion: claudecli.PromptVersion(claudecli.Language(*language)), SkillVersion: claudecli.SkillVersion, Engine: claudecli.Engine, Model: *model},
 		Render:  func(markdown string) string { return string(ui.RenderMarkdown(markdown)) },
 	}
 	report := smoke.Run(ctx, ref)
@@ -312,6 +317,7 @@ type config struct {
 	windowWidth   int
 	windowHeight  int
 	model         string
+	language      string
 	claude        string
 	analysisTime  time.Duration
 	maxTurns      int
@@ -333,6 +339,7 @@ func runDemonstrator(args []string) error {
 	fs.IntVar(&cfg.windowWidth, "window-width", 1180, "window width in points")
 	fs.IntVar(&cfg.windowHeight, "window-height", 860, "window height in points")
 	fs.StringVar(&cfg.model, "model", os.Getenv("PRADAR_CLAUDE_MODEL"), "the single Claude model used for every analysis")
+	fs.StringVar(&cfg.language, "analysis-language", cmp.Or(os.Getenv("PRADAR_ANALYSIS_LANGUAGE"), string(claudecli.French)), "language the analyses are written in: fr or en")
 	fs.StringVar(&cfg.claude, "claude", "claude", "Claude CLI executable")
 	fs.DurationVar(&cfg.analysisTime, "analysis-timeout", 10*time.Minute, "maximum duration of one Claude invocation")
 	fs.IntVar(&cfg.maxTurns, "max-turns", 12, "maximum agentic turns per Claude invocation")
@@ -375,9 +382,13 @@ func runDemonstrator(args []string) error {
 		if err != nil {
 			return fmt.Errorf("claude CLI not found: %w", err)
 		}
-		analyzer = &claudecli.Analyzer{Executable: claudePath, Model: cfg.model, Timeout: cfg.analysisTime,
+		language := claudecli.Language(cfg.language)
+		if !language.Valid() {
+			return fmt.Errorf("--analysis-language: %q is not a language PRadar writes; use fr or en", cfg.language)
+		}
+		analyzer = &claudecli.Analyzer{Executable: claudePath, Model: cfg.model, Language: language, Timeout: cfg.analysisTime,
 			MaxOutput: 16 << 20, MaxTurns: cfg.maxTurns, MaxBudgetUSD: cfg.maxBudgetUSD, Env: claudecli.MinimalEnv()}
-		profile = pullrequest.Profile{PromptVersion: claudecli.PromptVersion, SkillVersion: claudecli.SkillVersion, Engine: claudecli.Engine, Model: cfg.model}
+		profile = pullrequest.Profile{PromptVersion: claudecli.PromptVersion(language), SkillVersion: claudecli.SkillVersion, Engine: claudecli.Engine, Model: cfg.model}
 	}
 
 	if err := os.MkdirAll(cfg.dataDir, 0o700); err != nil {
@@ -413,7 +424,7 @@ func runDemonstrator(args []string) error {
 	}
 
 	server := &ui.Server{Reader: reader, Collector: collector, Evaluator: evaluator, Log: log,
-		ParseRepositoryURL: instance.ParseRepositoryURL, Version: version}
+		ParseRepositoryURL: instance.ParseRepositoryURL, Version: version, AnalysisLanguage: cfg.language}
 	if cfg.window {
 		// A window must never navigate away from the owned origin, so the
 		// interface hands external links to the browser through the server.

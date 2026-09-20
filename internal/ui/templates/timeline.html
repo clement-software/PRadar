@@ -71,7 +71,7 @@
 
 <section class="panel" aria-labelledby="subscriptions-title">
   <h2 id="subscriptions-title">Abonnements</h2>
-  <p class="meta">Moteur configuré : {{.Engine}} · <a href="/usage.json">Exporter les mesures d'usage</a></p>
+  <p class="meta">Moteur configuré : {{.Engine}}{{with .Language}} · analyses rédigées en {{if eq . "fr"}}français{{else}}anglais{{end}}{{end}} · <a href="/usage.json">Exporter les mesures d'usage</a></p>
   {{if not .Status.Repositories}}
   <p class="first-run">Aucun dépôt suivi pour l'instant. Collez l'URL Forgejo d'un dépôt ci-dessous, autorisez le moteur configuré, puis PRadar analysera ses pull requests ouvertes.</p>
   {{end}}

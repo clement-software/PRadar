@@ -46,6 +46,7 @@ portes (`gofmt`, `go mod tidy -diff`, `go vet`, tests avec `-race`,
 # analyse contrôlée de bout en bout, sans instance ni jeton
 go run ./cmd/pradar run --controlled
 
+# langue des analyses : --analysis-language fr (défaut) ou en
 # instance réelle : jeton lecture seule dans le trousseau macOS, puis lancement
 printf '%s' "$TOKEN" | go run ./cmd/pradar token set --instance https://forge.example
 go run ./cmd/pradar run --instance https://forge.example --model <modèle Claude>
@@ -58,6 +59,13 @@ go run ./cmd/pradar smoke --instance https://forge.example --pull-request owner/
 go run ./cmd/pradar corpus candidates --instance https://forge.example owner/repo-a owner/repo-b > manifest.json
 #   garder 20 éléments (2 ou 3 dépôts), remplir "category" (code|ci|infra) et "reason", vérifier "size" et "authorship"
 go run ./cmd/pradar corpus freeze manifest.json
+
+Les analyses sont rédigées en français par défaut. `--analysis-language en`
+les demande en anglais ; la langue fait partie de l'identité d'une analyse,
+donc changer de langue ne réécrit rien : les analyses existantes restent dans
+l'historique et les prochaines versions observées sont rédigées dans la
+nouvelle langue. Pour réanalyser une version déjà publiée dans l'autre langue,
+utilisez « Rejouer l'analyse » sur sa carte.
 
 Une version observée attend dix minutes avant d'être analysée : c'est
 l'anti-rebond, qui regroupe une rafale de commits pour n'analyser que la
